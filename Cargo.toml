@@ -8,10 +8,6 @@ bitvec = "1.0.1"
 murmurhash3 = "0.0.5"
 criterion = "0.5"
 
-[lib]
-name = "bloom_filter"
-path = "src/bloom_filter.rs"
-
 [[bench]]
 name = "bloom_filter"
 harness = false
