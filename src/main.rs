@@ -1,4 +1,4 @@
-use hash_bench::BloomFilter;
+use bloom_filter::BloomFilter;
 
 fn main() {
     let mut b = BloomFilter::new(10, 0.01);
