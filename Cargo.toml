@@ -1,0 +1,13 @@
+[package]
+name = "hash_bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitvec = "1.0.1"
+murmurhash3 = "0.0.5"
+criterion = "0.5"
+
+[[bench]]
+name = "bloom_filter"
+harness = false
