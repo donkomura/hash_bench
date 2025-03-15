@@ -23,7 +23,7 @@ pub struct HashRing {
 impl HashRingInterface for HashRing {
     fn insert(&mut self, hash: i64) {
         if !self.leagal_range(hash) {
-            return;
+            panic!("hash {} is out of range", hash);
         }
         let new_node = Arc::new(Mutex::new(Node {
             value: hash,
@@ -127,11 +127,12 @@ impl HashRing {
             head: None,
             k: k,
             min: 0,
-            max: 1 << k - 1,
+            max: (1 << k) - 1,
         }
     }
     pub fn print(&self) {
         let nodes = self.to_vec();
+        println!("min: {}, max: {}", self.min, self.max);
         println!("{:?}", nodes);
     }
     fn to_vec(&self) -> Vec<i64> {
@@ -194,12 +195,14 @@ mod test {
 
     #[test]
     fn multiple_insert_lookup() {
-        let mut h = HashRing::new(6);
+        let mut h = HashRing::new(5);
         h.insert(5);
         h.print();
         h.insert(12);
         h.print();
         h.insert(18);
+        h.print();
+        h.insert(29);
         h.print();
         let lookup_5 = h.lookup(5);
         assert_eq!(lookup_5.is_some(), true);
@@ -207,7 +210,7 @@ mod test {
             let node = node.try_lock().unwrap();
             assert_eq!(node.value, 5);
         }
-        let want = vec![5, 12, 18];
+        let want = vec![5, 12, 18, 29];
         let got = h.to_vec();
         assert_eq!(want, got);
     }
