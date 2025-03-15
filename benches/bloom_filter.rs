@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use hash_bench::BloomFilter;
+use hash_bench::bloom_filter::BloomFilter;
 
 fn bench_bloom_filter(c: &mut Criterion) {
     c.bench_function("bench_bloom_filter", |b| {
