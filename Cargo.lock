@@ -207,6 +207,7 @@ dependencies = [
  "bitvec",
  "criterion",
  "murmurhash3",
+ "num-traits",
 ]
 
 [[package]]

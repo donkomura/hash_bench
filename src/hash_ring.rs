@@ -1,28 +1,42 @@
 use core::panic;
 use std::sync::{Arc, Mutex};
 
-pub trait HashRingInterface {
-    fn insert(&mut self, hash: i64);
-    fn lookup(&self, hash: i64) -> Option<Arc<Mutex<Node>>>;
+use num_traits;
+
+pub trait HashRingInterface<T> {
+    fn insert(&mut self, hash: T);
+    fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>>;
 }
 
 #[derive(Debug)]
-pub struct Node {
-    value: i64,
-    prev: Option<Arc<Mutex<Node>>>,
-    next: Option<Arc<Mutex<Node>>>,
+pub struct Node<T> {
+    value: T,
+    prev: Option<Arc<Mutex<Node<T>>>>,
+    next: Option<Arc<Mutex<Node<T>>>>,
 }
 
-pub struct HashRing {
-    head: Option<Arc<Mutex<Node>>>,
+pub struct HashRing<T> {
+    head: Option<Arc<Mutex<Node<T>>>>,
     k: u32,
-    min: i64,
-    max: i64,
+    min: T,
+    max: T,
 }
 
-impl HashRingInterface for HashRing {
-    fn insert(&mut self, hash: i64) {
-        if !self.leagal_range(hash) {
+impl<
+        T: std::fmt::Debug
+            + std::fmt::Display
+            + PartialOrd
+            + PartialEq
+            + Copy
+            + num_traits::NumOps
+            + num_traits::Zero
+            + num_traits::FromPrimitive
+            + num_traits::One
+            + num_traits::PrimInt,
+    > HashRingInterface<T> for HashRing<T>
+{
+    fn insert(&mut self, hash: T) {
+        if !HashRing::legal_range(self, hash) {
             panic!("hash {} is out of range", hash);
         }
         let new_node = Arc::new(Mutex::new(Node {
@@ -75,28 +89,28 @@ impl HashRingInterface for HashRing {
                 head_mut.prev = Some(Arc::clone(&new_node));
             }
         }
-        let head_value: i64 = {
+        let head_value: T = {
             if let Some(head_node) = self.head.clone() {
                 head_node.try_lock().unwrap().value
             } else {
-                0
+                num_traits::Zero::zero()
             }
         };
         if hash < head_value {
             self.head = Some(Arc::clone(&new_node));
         }
     }
-    fn lookup(&self, hash: i64) -> Option<Arc<Mutex<Node>>> {
+    fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>> {
         let mut current = self.head.clone();
-        let head_value: i64 = {
+        let head_value: T = {
             if let Some(head_node) = self.head.clone() {
                 head_node.try_lock().unwrap().value
             } else {
-                0
+                num_traits::Zero::zero()
             }
         };
 
-        let mut current_value: i64;
+        let mut current_value: T;
         while let Some(node) = &current {
             let next_node = {
                 let node = node.try_lock().unwrap();
@@ -121,13 +135,26 @@ impl HashRingInterface for HashRing {
         current
     }
 }
-impl HashRing {
+impl<
+        T: std::fmt::Debug
+            + std::fmt::Display
+            + PartialOrd
+            + PartialEq
+            + Copy
+            + PartialEq
+            + num_traits::Zero
+            + num_traits::FromPrimitive
+            + num_traits::One
+            + num_traits::NumOps
+            + num_traits::PrimInt,
+    > HashRing<T>
+{
     pub fn new(k: u32) -> Self {
         Self {
             head: None,
             k: k,
-            min: 0,
-            max: (1 << k) - 1,
+            min: num_traits::Zero::zero(),
+            max: num_traits::FromPrimitive::from_i64((1 << k) - 1).unwrap(),
         }
     }
     pub fn print(&self) {
@@ -135,7 +162,7 @@ impl HashRing {
         println!("min: {}, max: {}", self.min, self.max);
         println!("{:?}", nodes);
     }
-    fn to_vec(&self) -> Vec<i64> {
+    fn to_vec(&self) -> Vec<T> {
         let mut head = self.head.clone();
         let mut nodes = Vec::new();
         loop {
@@ -160,16 +187,16 @@ impl HashRing {
         }
         nodes
     }
-    fn leagal_range(&self, hash: i64) -> bool {
+    fn legal_range(&self, hash: T) -> bool {
         self.min <= hash && hash <= self.max
     }
-    fn distance(&self, a: i64, b: i64) -> i64 {
+    fn distance(&self, a: T, b: T) -> T {
         if a == b {
-            return 0;
+            return num_traits::Zero::zero();
         } else if a < b {
             return b - a;
         }
-        let x: i64 = 2;
+        let x: T = num_traits::FromPrimitive::from_i64(2).unwrap();
         return x.pow(self.k) + (b - a);
     }
 }
