@@ -34,86 +34,91 @@ impl HashRingInterface for HashRing {
         if let Some(found) = self.lookup(hash) {
             let node_ref = Arc::clone(&found);
             let mut node = node_ref.try_lock().unwrap();
-            if let Some(next_node_ref) = node.next.take() {
-                let mut next_node= next_node_ref.try_lock().unwrap();
-                next_node.prev = Some(Arc::clone(&new_node));
-                let mut new_node_mut = new_node.try_lock().unwrap();
-                new_node_mut.prev = Some(Arc::clone(&node_ref));
-                new_node_mut.next = Some(Arc::clone(&next_node_ref));
-            } else {
-                panic!("Node {} is found, but it is invalid node", hash);
-            }
-            node.prev = Some(new_node);
+            let next_node_ref = node
+                .next
+                .take()
+                .expect(&format!("Node {} is found, but it is invalid node", hash));
+            node.next = Some(Arc::clone(&new_node));
+            drop(node);
+            let next_node_ref_clone = Arc::clone(&next_node_ref);
+            let mut new_node_mut = new_node.try_lock().unwrap();
+            new_node_mut.prev = Some(Arc::clone(&node_ref));
+            new_node_mut.next = Some(Arc::clone(&next_node_ref));
+
+            let mut next_node = next_node_ref_clone.try_lock().unwrap();
+            next_node.prev = Some(Arc::clone(&new_node));
         } else {
             if let Some(head_ref) = &self.head {
-                // head がある場合は head の後ろに挿入する
-                let tail_node_ref = {
+                // head がある場合は head の前（一番後ろ）に挿入する
+                let head_prev_ref_clone = {
                     let head = head_ref.try_lock().unwrap();
                     head.next.clone()
                 };
-                if let Some(tail_node_ref) = tail_node_ref {
+                if let Some(head_prev_ref) = head_prev_ref_clone {
                     {
-                        let mut tail = tail_node_ref.try_lock().unwrap();
+                        let mut head_prev = head_prev_ref.try_lock().unwrap();
                         let mut new_node_mut = new_node.try_lock().unwrap();
-                        tail.prev = Some(Arc::clone(&new_node));
-                        new_node_mut.next = Some(Arc::clone(&tail_node_ref));
-                        new_node_mut.prev = Some(Arc::clone(&head_ref));
+                        head_prev.next = Some(Arc::clone(&new_node));
+                        new_node_mut.prev = Some(Arc::clone(&head_prev_ref));
+                        new_node_mut.next = Some(Arc::clone(&head_ref));
                     }
-
                     let mut head = head_ref.try_lock().unwrap();
-                    head.next = Some(Arc::clone(&new_node));
+                    head.prev = Some(Arc::clone(&new_node));
                 } else {
-                    let mut head = head_ref.try_lock().unwrap();
-                    head.next = Some(Arc::clone(&new_node));
-                    let mut new_node_mut = new_node.try_lock().unwrap();
-                    new_node_mut.next = Some(Arc::clone(&head_ref));
-                    new_node_mut.prev = Some(Arc::clone(&head_ref));
+                    panic!("head.next is None");
                 }
             } else {
                 // head がない場合はそのまま head に設定する
                 self.head = Some(Arc::clone(&new_node));
-                let mut new_node_mut = new_node.try_lock().unwrap();
-                new_node_mut.next = Some(Arc::clone(&new_node));
-                new_node_mut.prev = Some(Arc::clone(&new_node));
+                let mut head_mut = self.head.as_ref().unwrap().try_lock().unwrap();
+                head_mut.next = Some(Arc::clone(&new_node));
+                head_mut.prev = Some(Arc::clone(&new_node));
             }
+        }
+        let head_value: i64 = {
+            if let Some(head_node) = self.head.clone() {
+                head_node.try_lock().unwrap().value
+            } else {
+                0
+            }
+        };
+        if hash < head_value {
+            self.head = Some(Arc::clone(&new_node));
         }
     }
     fn lookup(&self, hash: i64) -> Option<Arc<Mutex<Node>>> {
         let mut current = self.head.clone();
-        let head_value: i64;
-        if let Some(head_node) = self.head.clone() {
-            head_value = head_node.try_lock().unwrap().value;
-        } else {
-            return None;
-        }
+        let head_value: i64 = {
+            if let Some(head_node) = self.head.clone() {
+                head_node.try_lock().unwrap().value
+            } else {
+                0
+            }
+        };
 
         let mut current_value: i64;
-        while let Some(node) = current {
-            let node_ref = Arc::clone(&node);
-            {
+        while let Some(node) = &current {
+            let next_node = {
                 let node = node.try_lock().unwrap();
                 current_value = node.value;
-                if node.value == hash {
-                    return Some(node_ref);
+                node.next.clone()
+            };
+            if let Some(next) = next_node.clone() {
+                if current_value == hash {
+                    break;
                 }
-                current = node.next.clone();
-            }
-            if let Some(next) = current.clone() {
+
                 let next_node = next.try_lock().unwrap();
                 if next_node.value == head_value {
                     break;
                 }
-                if self.distance(current_value, hash) > self.distance(next_node.value, hash) {
+                if self.distance(current_value, hash) <= self.distance(next_node.value, hash) {
                     break;
                 }
             }
+            current = next_node;
         }
-        if let Some(current_node) = current {
-            if current_node.try_lock().unwrap().value == hash {
-                return Some(current_node);
-            }
-        }
-        None
+        current
     }
 }
 impl HashRing {
@@ -124,6 +129,35 @@ impl HashRing {
             min: 0,
             max: 1 << k - 1,
         }
+    }
+    pub fn print(&self) {
+        let nodes = self.to_vec();
+        println!("{:?}", nodes);
+    }
+    fn to_vec(&self) -> Vec<i64> {
+        let mut head = self.head.clone();
+        let mut nodes = Vec::new();
+        loop {
+            let found = nodes.iter().find(|&x| {
+                if let Some(ref head_node) = head {
+                    let head_value = head_node.try_lock().unwrap().value;
+                    *x == head_value
+                } else {
+                    false
+                }
+            });
+            if found.is_some() {
+                break;
+            }
+            if let Some(node_ref) = head.clone() {
+                let node = node_ref.try_lock().unwrap();
+                nodes.push(node.value);
+                head = node.next.clone();
+            } else {
+                break;
+            }
+        }
+        nodes
     }
     fn leagal_range(&self, hash: i64) -> bool {
         self.min <= hash && hash <= self.max
@@ -145,10 +179,11 @@ mod test {
 
     #[test]
     fn distance_ring_5() {
-        let h = HashRing::new(5);
-        assert_eq!(h.distance(29, 5), 8);
-        assert_eq!(h.distance(29, 12), 15);
-        assert_eq!(h.distance(5, 29), 24);
+        let h = HashRing::new(6);
+        assert_eq!(h.distance(0, 5), 5);
+        assert_eq!(h.distance(5, 12), 7);
+        assert_eq!(h.distance(12, 32), 20);
+        assert_eq!(h.distance(5, 18), 13);
     }
     #[test]
     fn hash_ring_insert_lookup() {
@@ -159,17 +194,21 @@ mod test {
 
     #[test]
     fn multiple_insert_lookup() {
-        let mut h = HashRing::new(5);
-        h.insert(3);
+        let mut h = HashRing::new(6);
         h.insert(5);
+        h.print();
         h.insert(12);
+        h.print();
+        h.insert(18);
+        h.print();
         let lookup_5 = h.lookup(5);
         assert_eq!(lookup_5.is_some(), true);
-        if let Some(node) = lookup_5{
+        if let Some(node) = lookup_5 {
             let node = node.try_lock().unwrap();
             assert_eq!(node.value, 5);
         }
-        let lookup_100 = h.lookup(100);
-        assert_eq!(lookup_100.is_some(), false);
+        let want = vec![5, 12, 18];
+        let got = h.to_vec();
+        assert_eq!(want, got);
     }
 }
