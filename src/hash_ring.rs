@@ -50,24 +50,24 @@ impl<
             next: None,
         }));
 
-        let prev_node_value: T;
+        let next_node_value: T;
         if let Some(ref found) = self.lookup(hash) {
             let node_ref = &Arc::clone(found);
             let mut node = node_ref.try_lock().unwrap();
-            let next_node_ref = &node
-                .next
+            let prev_node_ref = &node
+                .prev
                 .take()
                 .unwrap_or_else(|| panic!("Node {} is found, but it is invalid node", hash));
-            node.next = Some(Arc::clone(new_node));
-            prev_node_value = node.value;
+            node.prev = Some(Arc::clone(new_node));
+            next_node_value = node.value;
             drop(node);
-            let next_node_ref_clone = &Arc::clone(next_node_ref);
+            let prev_node_ref_clone = &Arc::clone(prev_node_ref);
             let mut new_node_mut = new_node.try_lock().unwrap();
-            new_node_mut.prev = Some(Arc::clone(node_ref));
-            new_node_mut.next = Some(Arc::clone(next_node_ref));
+            new_node_mut.prev = Some(Arc::clone(prev_node_ref));
+            new_node_mut.next = Some(Arc::clone(node_ref));
 
-            let mut next_node = next_node_ref_clone.try_lock().unwrap();
-            next_node.prev = Some(Arc::clone(new_node));
+            let mut prev_node = prev_node_ref_clone.try_lock().unwrap();
+            prev_node.next = Some(Arc::clone(new_node));
         } else if let Some(head_ref) = &self.head {
             // head がある場合は head の前（一番後ろ）に挿入する
             let head_prev_ref_clone = {
@@ -84,7 +84,7 @@ impl<
                 }
                 let mut head = head_ref.try_lock().unwrap();
                 head.prev = Some(Arc::clone(new_node));
-                prev_node_value = head.value;
+                next_node_value = head.value;
             } else {
                 panic!("head.next is None");
             }
@@ -94,7 +94,7 @@ impl<
             let mut head_mut = self.head.as_ref().unwrap().try_lock().unwrap();
             head_mut.next = Some(Arc::clone(new_node));
             head_mut.prev = Some(Arc::clone(new_node));
-            prev_node_value = hash;
+            next_node_value = hash;
         }
         let head_value: T = {
             if let Some(head_node) = self.head.clone() {
@@ -103,10 +103,10 @@ impl<
                 num_traits::Zero::zero()
             }
         };
-        self.move_resource(hash, prev_node_value, false);
         if hash < head_value {
             self.head = Some(Arc::clone(new_node));
         }
+        self.move_resource(hash, next_node_value, false);
     }
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>> {
         let mut current = self.head.clone();
@@ -143,7 +143,7 @@ impl<
         current
     }
     fn move_resource(&self, dest: T, src: T, is_delete: bool) {
-        let mut delete_list = vec![];
+        let mut resources: Vec<(T, T)> = Vec::new();
         let dest_node = self.lookup(dest);
         let src_node = self.lookup(src);
         if dest_node.is_none() || src_node.is_none() {
@@ -154,16 +154,17 @@ impl<
             let mut _src_node = src_node_ref.try_lock().unwrap();
             for (key, value) in _src_node.resource.iter() {
                 if self.distance(*key, dest) < self.distance(*key, src) || is_delete {
-                    if let Some(ref dest_node_ref) = dest_node {
-                        let mut _dest_node = dest_node_ref.try_lock().unwrap();
-                        _dest_node.resource.insert(*key, *value);
-                        delete_list.push(*key);
-                    }
-                    delete_list.push(*key);
+                    resources.push((*key, *value));
                 }
             }
-            for item in delete_list {
-                _src_node.resource.remove(&item);
+            for (key, _) in &resources {
+                _src_node.resource.remove(key);
+            }
+        }
+        if let Some(dest_node_ref) = dest_node {
+            let mut dest_node = dest_node_ref.try_lock().unwrap();
+            for (key, value) in resources.iter() {
+                dest_node.resource.insert(*key, *value);
             }
         }
     }
@@ -256,13 +257,11 @@ impl<
     fn nodes(&self) -> Vec<T> {
         let mut head = self.head.clone();
         let mut nodes = Vec::new();
-        loop {
-            if let Some(node_ref) = head.clone() {
+        while let Some(node_ref) = head.clone() {
+            {
                 let node = node_ref.try_lock().unwrap();
                 nodes.push(node.value);
                 head = node.next.clone();
-            } else {
-                break;
             }
 
             let found = nodes.iter().find(|&x| {
@@ -336,7 +335,7 @@ mod test {
             let node = node.try_lock().unwrap();
             assert_eq!(node.value, 5);
         }
-        let want = vec![5, 29, 18, 12]; // 反時計回り
+        let want = vec![5, 12, 18, 29];
         let got = h.nodes();
         assert_eq!(want, got);
     }
