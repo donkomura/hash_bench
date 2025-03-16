@@ -18,6 +18,12 @@ pub struct Node<T> {
     next: Option<Arc<Mutex<Node<T>>>>,
 }
 
+impl<T> Node<T> {
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+}
+
 pub struct HashRing<T> {
     head: Option<Arc<Mutex<Node<T>>>>,
     k: u32,
@@ -40,10 +46,10 @@ impl<
     > HashRingInterface<T> for HashRing<T>
 {
     fn add_node(&mut self, hash: T) {
-        if !HashRing::legal_range(self, hash) {
+        if !self.legal_range(hash) {
             panic!("hash {} is out of range", hash);
         }
-        let new_node = &Arc::new(Mutex::new(Node {
+        let new_node = Arc::new(Mutex::new(Node {
             value: hash,
             resource: HashMap::new(),
             prev: None,
@@ -52,22 +58,23 @@ impl<
 
         let next_node_value: T;
         if let Some(ref found) = self.lookup(hash) {
-            let node_ref = &Arc::clone(found);
+            let node_ref = Arc::clone(found);
             let mut node = node_ref.try_lock().unwrap();
-            let prev_node_ref = &node
+            let prev_node_ref = node
                 .prev
                 .take()
                 .unwrap_or_else(|| panic!("Node {} is found, but it is invalid node", hash));
-            node.prev = Some(Arc::clone(new_node));
-            next_node_value = node.value;
+            node.prev = Some(Arc::clone(&new_node));
+            next_node_value = *node.value();
             drop(node);
-            let prev_node_ref_clone = &Arc::clone(prev_node_ref);
-            let mut new_node_mut = new_node.try_lock().unwrap();
-            new_node_mut.prev = Some(Arc::clone(prev_node_ref));
-            new_node_mut.next = Some(Arc::clone(node_ref));
 
-            let mut prev_node = prev_node_ref_clone.try_lock().unwrap();
-            prev_node.next = Some(Arc::clone(new_node));
+            let mut new_node_mut = new_node.try_lock().unwrap();
+            new_node_mut.prev = Some(Arc::clone(&prev_node_ref));
+            new_node_mut.next = Some(Arc::clone(&node_ref));
+            drop(new_node_mut);
+
+            let mut prev_node = prev_node_ref.try_lock().unwrap();
+            prev_node.next = Some(Arc::clone(&new_node));
         } else if let Some(head_ref) = &self.head {
             // head がある場合は head の前（一番後ろ）に挿入する
             let head_prev_ref_clone = {
@@ -75,36 +82,38 @@ impl<
                 head.next.clone()
             };
             if let Some(ref head_prev_ref) = head_prev_ref_clone {
-                {
-                    let mut head_prev = head_prev_ref.try_lock().unwrap();
-                    let mut new_node_mut = new_node.try_lock().unwrap();
-                    head_prev.next = Some(Arc::clone(new_node));
-                    new_node_mut.prev = Some(Arc::clone(head_prev_ref));
-                    new_node_mut.next = Some(Arc::clone(head_ref));
-                }
+                let mut head_prev = head_prev_ref.try_lock().unwrap();
+                let mut new_node_mut = new_node.try_lock().unwrap();
+                head_prev.next = Some(Arc::clone(&new_node));
+                new_node_mut.prev = Some(Arc::clone(head_prev_ref));
+                new_node_mut.next = Some(Arc::clone(head_ref));
+                drop(new_node_mut);
+                drop(head_prev);
+
                 let mut head = head_ref.try_lock().unwrap();
-                head.prev = Some(Arc::clone(new_node));
-                next_node_value = head.value;
+                head.prev = Some(Arc::clone(&new_node));
+                next_node_value = *head.value();
             } else {
                 panic!("head.next is None");
             }
         } else {
             // head がない場合はそのまま head に設定する
-            self.head = Some(Arc::clone(new_node));
+            self.head = Some(Arc::clone(&new_node));
             let mut head_mut = self.head.as_ref().unwrap().try_lock().unwrap();
-            head_mut.next = Some(Arc::clone(new_node));
-            head_mut.prev = Some(Arc::clone(new_node));
+            head_mut.next = Some(Arc::clone(&new_node));
+            head_mut.prev = Some(Arc::clone(&new_node));
             next_node_value = hash;
         }
-        self.head = Some(Arc::clone(new_node));
+        self.head = Some(Arc::clone(&new_node));
         self.move_resource(hash, next_node_value, false);
         println!("add node: {}, and now moving resources...", hash);
     }
+
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>> {
         let mut current = self.head.clone();
         let head_value: T = {
             if let Some(head_node) = self.head.clone() {
-                head_node.try_lock().unwrap().value
+                *head_node.try_lock().unwrap().value()
             } else {
                 num_traits::Zero::zero()
             }
@@ -114,7 +123,7 @@ impl<
             let current_value: T;
             let next_node = {
                 let node = node.try_lock().unwrap();
-                current_value = node.value;
+                current_value = *node.value();
                 node.next.clone()
             };
             if let Some(next) = next_node.clone() {
@@ -122,10 +131,10 @@ impl<
                 if current_value == hash {
                     break;
                 }
-                if next_node.value == head_value {
+                if *next_node.value() == head_value {
                     break;
                 }
-                if self.distance(hash, current_value) < self.distance(hash, next_node.value) {
+                if self.distance(hash, current_value) < self.distance(hash, *next_node.value()) {
                     break;
                 }
             }
@@ -133,6 +142,7 @@ impl<
         }
         current
     }
+
     fn move_resource(&self, dest: T, src: T, is_delete: bool) {
         let mut resources: Vec<(T, T)> = Vec::new();
         let dest_node = self.lookup(dest);
@@ -143,7 +153,7 @@ impl<
 
         if let Some(src_node_ref) = src_node {
             let mut _src_node = src_node_ref.try_lock().unwrap();
-            assert!(src == _src_node.value);
+            assert!(src == *_src_node.value());
             for (key, value) in _src_node.resource.iter() {
                 if self.distance(*key, dest) < self.distance(*key, src) || is_delete {
                     println!(
@@ -159,14 +169,16 @@ impl<
                 _src_node.resource.remove(key);
             }
         }
+
         if let Some(dest_node_ref) = dest_node {
             let mut dest_node = dest_node_ref.try_lock().unwrap();
-            assert!(dest == dest_node.value);
+            assert!(dest == *dest_node.value());
             for (key, value) in resources {
                 dest_node.resource.insert(key, value);
             }
         }
     }
+
     fn add_resource(&self, hash: T) {
         if !self.legal_range(hash) {
             panic!("hash {} is out of range", hash);
@@ -180,6 +192,7 @@ impl<
         }
     }
 }
+
 impl<
         T: std::fmt::Debug
             + std::fmt::Display
@@ -187,7 +200,6 @@ impl<
             + PartialEq
             + Copy
             + std::hash::Hash
-            + PartialEq
             + num_traits::Zero
             + num_traits::FromPrimitive
             + num_traits::One
@@ -203,13 +215,14 @@ impl<
             max: num_traits::FromPrimitive::from_i64((1 << k) - 1).unwrap(),
         }
     }
+
     pub fn print(&self) {
         let nodes = self.nodes();
         println!("min: {}, max: {}", self.min, self.max);
         println!("{:?}", nodes);
         let head_value = {
             if let Some(head_node) = self.head.clone() {
-                head_node.try_lock().unwrap().value
+                *head_node.try_lock().unwrap().value()
             } else {
                 num_traits::Zero::zero()
             }
@@ -219,12 +232,13 @@ impl<
             println!("node: {}, value: {:?}", key, vec);
         }
     }
+
     fn resources(&self) -> HashMap<T, Vec<(T, T)>> {
         let mut head = self.head.clone();
         let mut resources: HashMap<T, Vec<(T, T)>> = HashMap::new();
         let head_value: T = {
             if let Some(head_node) = self.head.clone() {
-                head_node.try_lock().unwrap().value
+                *head_node.try_lock().unwrap().value()
             } else {
                 num_traits::Zero::zero()
             }
@@ -238,13 +252,13 @@ impl<
                 for (key, value) in node_resources {
                     resource.push((*key, *value));
                 }
-                resources.insert(node.value, resource);
+                resources.insert(*node.value(), resource);
                 head = node.next.clone();
             }
 
             if let Some(node_ref) = head.clone() {
                 let node = node_ref.try_lock().unwrap();
-                if node.value == head_value {
+                if *node.value() == head_value {
                     break;
                 }
             } else {
@@ -253,19 +267,20 @@ impl<
         }
         resources
     }
+
     fn nodes(&self) -> Vec<T> {
         let mut head = self.head.clone();
         let mut nodes = Vec::new();
         while let Some(node_ref) = head.clone() {
             {
                 let node = node_ref.try_lock().unwrap();
-                nodes.push(node.value);
+                nodes.push(*node.value());
                 head = node.next.clone();
             }
 
             let found = nodes.iter().find(|&x| {
                 if let Some(ref head_node) = head {
-                    let head_value = head_node.try_lock().unwrap().value;
+                    let head_value = *head_node.try_lock().unwrap().value();
                     *x == head_value
                 } else {
                     false
@@ -277,9 +292,11 @@ impl<
         }
         nodes
     }
+
     fn legal_range(&self, hash: T) -> bool {
         self.min <= hash && hash <= self.max
     }
+
     fn distance(&self, a: T, b: T) -> T {
         match a.cmp(&b) {
             std::cmp::Ordering::Equal => num_traits::Zero::zero(),
@@ -310,6 +327,7 @@ mod test {
         assert_eq!(h.distance(12, 24), 12);
         assert_eq!(h.distance(18, 24), 6);
     }
+
     #[test]
     fn hash_ring_add_node_lookup() {
         let mut h = HashRing::new(5);
@@ -332,12 +350,13 @@ mod test {
         assert!(lookup_5.is_some());
         if let Some(node) = lookup_5 {
             let node = node.try_lock().unwrap();
-            assert_eq!(node.value, 5);
+            assert_eq!(*node.value(), 5);
         }
         let want = vec![29, 5, 12, 18];
         let got = h.nodes();
         assert_eq!(want, got);
     }
+
     #[test]
     fn add_resource() {
         let mut h = HashRing::new(5);
@@ -371,6 +390,7 @@ mod test {
             ])
         );
     }
+
     #[test]
     fn move_resource() {
         let mut h = HashRing::new(5);
@@ -407,6 +427,7 @@ mod test {
             ])
         );
     }
+
     #[test]
     fn add_resource_with_resource_move() {
         let mut h = HashRing::new(5);
