@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub trait HashRingInterface<T: std::hash::Hash> {
-    fn insert(&mut self, hash: T);
+    fn add_node(&mut self, hash: T);
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>>;
     fn move_resource(&self, dest: T, src: T, is_delete: bool);
     fn add_resource(&self, hash: T);
@@ -39,7 +39,7 @@ impl<
             + num_traits::PrimInt,
     > HashRingInterface<T> for HashRing<T>
 {
-    fn insert(&mut self, hash: T) {
+    fn add_node(&mut self, hash: T) {
         if !HashRing::legal_range(self, hash) {
             panic!("hash {} is out of range", hash);
         }
@@ -50,6 +50,7 @@ impl<
             next: None,
         }));
 
+        let prev_node_value: T;
         if let Some(ref found) = self.lookup(hash) {
             let node_ref = &Arc::clone(found);
             let mut node = node_ref.try_lock().unwrap();
@@ -58,6 +59,7 @@ impl<
                 .take()
                 .unwrap_or_else(|| panic!("Node {} is found, but it is invalid node", hash));
             node.next = Some(Arc::clone(new_node));
+            prev_node_value = node.value;
             drop(node);
             let next_node_ref_clone = &Arc::clone(next_node_ref);
             let mut new_node_mut = new_node.try_lock().unwrap();
@@ -82,6 +84,7 @@ impl<
                 }
                 let mut head = head_ref.try_lock().unwrap();
                 head.prev = Some(Arc::clone(new_node));
+                prev_node_value = head.value;
             } else {
                 panic!("head.next is None");
             }
@@ -91,6 +94,7 @@ impl<
             let mut head_mut = self.head.as_ref().unwrap().try_lock().unwrap();
             head_mut.next = Some(Arc::clone(new_node));
             head_mut.prev = Some(Arc::clone(new_node));
+            prev_node_value = hash;
         }
         let head_value: T = {
             if let Some(head_node) = self.head.clone() {
@@ -99,6 +103,7 @@ impl<
                 num_traits::Zero::zero()
             }
         };
+        self.move_resource(hash, prev_node_value, false);
         if hash < head_value {
             self.head = Some(Arc::clone(new_node));
         }
@@ -113,8 +118,8 @@ impl<
             }
         };
 
-        let mut current_value: T;
         while let Some(node) = &current {
+            let current_value: T;
             let next_node = {
                 let node = node.try_lock().unwrap();
                 current_value = node.value;
@@ -122,7 +127,7 @@ impl<
             };
             if let Some(next) = next_node.clone() {
                 let next_node = next.try_lock().unwrap();
-                if self.distance(current_value, hash) < self.distance(next_node.value, hash) {
+                if self.distance(hash, current_value) < self.distance(hash, next_node.value) {
                     break;
                 }
 
@@ -150,8 +155,8 @@ impl<
             for (key, value) in _src_node.resource.iter() {
                 if self.distance(*key, dest) < self.distance(*key, src) || is_delete {
                     if let Some(ref dest_node_ref) = dest_node {
-                        let mut dest_node = dest_node_ref.try_lock().unwrap();
-                        dest_node.resource.insert(*key, *value);
+                        let mut _dest_node = dest_node_ref.try_lock().unwrap();
+                        _dest_node.resource.insert(*key, *value);
                         delete_list.push(*key);
                     }
                     delete_list.push(*key);
@@ -202,6 +207,14 @@ impl<
         let nodes = self.nodes();
         println!("min: {}, max: {}", self.min, self.max);
         println!("{:?}", nodes);
+        let head_value = {
+            if let Some(head_node) = self.head.clone() {
+                head_node.try_lock().unwrap().value
+            } else {
+                num_traits::Zero::zero()
+            }
+        };
+        println!("head: {:?}", head_value);
         for (key, vec) in self.resources().iter() {
             println!("node: {}, value: {:?}", key, vec);
         }
@@ -244,6 +257,14 @@ impl<
         let mut head = self.head.clone();
         let mut nodes = Vec::new();
         loop {
+            if let Some(node_ref) = head.clone() {
+                let node = node_ref.try_lock().unwrap();
+                nodes.push(node.value);
+                head = node.next.clone();
+            } else {
+                break;
+            }
+
             let found = nodes.iter().find(|&x| {
                 if let Some(ref head_node) = head {
                     let head_value = head_node.try_lock().unwrap().value;
@@ -253,13 +274,6 @@ impl<
                 }
             });
             if found.is_some() {
-                break;
-            }
-            if let Some(node_ref) = head.clone() {
-                let node = node_ref.try_lock().unwrap();
-                nodes.push(node.value);
-                head = node.next.clone();
-            } else {
                 break;
             }
         }
@@ -286,29 +300,35 @@ mod test {
 
     #[test]
     fn distance_ring_5() {
-        let h = HashRing::new(6);
+        let h = HashRing::new(5);
         assert_eq!(h.distance(0, 5), 5);
         assert_eq!(h.distance(5, 12), 7);
         assert_eq!(h.distance(12, 32), 20);
         assert_eq!(h.distance(5, 18), 13);
+        assert_eq!(h.distance(29, 5), 8);
+        assert_eq!(h.distance(5, 5), 0);
+        assert_eq!(h.distance(29, 12), 15);
+        assert_eq!(h.distance(5, 29), 24);
+        assert_eq!(h.distance(12, 24), 12);
+        assert_eq!(h.distance(18, 24), 6);
     }
     #[test]
-    fn hash_ring_insert_lookup() {
+    fn hash_ring_add_node_lookup() {
         let mut h = HashRing::new(5);
-        h.insert(3);
+        h.add_node(3);
         let _node_ref = h.lookup(3);
     }
 
     #[test]
-    fn multiple_insert_lookup() {
+    fn multiple_add_node_lookup() {
         let mut h = HashRing::new(5);
-        h.insert(5);
+        h.add_node(5);
         h.print();
-        h.insert(12);
+        h.add_node(12);
         h.print();
-        h.insert(18);
+        h.add_node(18);
         h.print();
-        h.insert(29);
+        h.add_node(29);
         h.print();
         let lookup_5 = h.lookup(5);
         assert!(lookup_5.is_some());
@@ -316,15 +336,15 @@ mod test {
             let node = node.try_lock().unwrap();
             assert_eq!(node.value, 5);
         }
-        let want = vec![5, 12, 18, 29];
+        let want = vec![5, 29, 18, 12]; // 反時計回り
         let got = h.nodes();
         assert_eq!(want, got);
     }
     #[test]
     fn add_resource() {
         let mut h = HashRing::new(5);
-        h.insert(12);
-        h.insert(18);
+        h.add_node(12);
+        h.add_node(18);
         h.add_resource(24);
         h.add_resource(21);
         h.add_resource(16);
@@ -336,11 +356,11 @@ mod test {
         h.add_resource(10);
         h.print();
         assert_eq!(h.resources().len(), 2);
-        assert_eq!(h.resources().get(&12).unwrap().len(), 1);
-        assert_eq!(h.resources().get(&18).unwrap().len(), 8);
-        assert_eq!(h.resources().get(&12), Some(&vec![(16, 16)]));
+        assert_eq!(h.resources().get(&12).unwrap().len(), 8);
+        assert_eq!(h.resources().get(&18).unwrap().len(), 1);
+        assert_eq!(h.resources().get(&18), Some(&vec![(16, 16)]));
         assert_eq!(
-            h.resources().get(&18),
+            h.resources().get(&12),
             Some(&vec![
                 (2, 2),
                 (7, 7),
@@ -356,8 +376,9 @@ mod test {
     #[test]
     fn move_resource() {
         let mut h = HashRing::new(5);
-        h.insert(12);
-        h.insert(18);
+        h.add_node(12);
+        h.add_node(18);
+        h.print();
         h.add_resource(24);
         h.add_resource(21);
         h.add_resource(16);
@@ -368,7 +389,7 @@ mod test {
         h.add_resource(7);
         h.add_resource(10);
         h.print();
-        h.move_resource(12, 18, false);
+        h.move_resource(12, 18, true);
         h.print();
         assert_eq!(h.resources().get(&18).unwrap().len(), 0);
         assert_eq!(h.resources().get(&12).unwrap().len(), 9);
@@ -387,5 +408,37 @@ mod test {
                 (29, 29)
             ])
         );
+    }
+    #[test]
+    fn add_resource_with_resource_move() {
+        let mut h = HashRing::new(5);
+        h.add_node(12);
+        h.add_node(18);
+        h.add_resource(24);
+        h.add_resource(21);
+        h.add_resource(16);
+        h.add_resource(23);
+        h.add_resource(2);
+        h.add_resource(29);
+        h.add_resource(28);
+        h.add_resource(7);
+        h.add_resource(10);
+        h.print();
+        assert_eq!(h.resources().get(&18).unwrap().len(), 1);
+        assert_eq!(h.resources().get(&12).unwrap().len(), 8);
+        h.add_node(1);
+        h.print();
+        assert_eq!(h.resources().get(&1).unwrap().len(), 5);
+        assert_eq!(h.resources().get(&12).unwrap().len(), 3);
+        assert_eq!(h.resources().get(&18).unwrap().len(), 1);
+        assert_eq!(
+            h.resources().get(&1),
+            Some(&vec![(21, 21), (23, 23), (24, 24), (28, 28), (29, 29)])
+        );
+        assert_eq!(
+            h.resources().get(&12),
+            Some(&vec![(2, 2), (7, 7), (10, 10)])
+        );
+        assert_eq!(h.resources().get(&18), Some(&vec![(16, 16)]));
     }
 }
