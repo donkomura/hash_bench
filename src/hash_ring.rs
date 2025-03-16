@@ -7,6 +7,7 @@ pub trait HashRingInterface<T: std::hash::Hash> {
     fn insert(&mut self, hash: T);
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>>;
     fn move_resource(&self, dest: T, src: T, is_delete: bool);
+    fn add_resource(&self, hash: T);
 }
 
 #[derive(Debug)]
@@ -44,6 +45,7 @@ impl<
         }
         let new_node = Arc::new(Mutex::new(Node {
             value: hash,
+            resource: HashMap::new(),
             prev: None,
             next: None,
         }));
@@ -160,6 +162,18 @@ impl<
             for item in delete_list {
                 _src_node.resource.remove(&item);
             }
+        }
+    }
+    fn add_resource(&self, hash: T) {
+        if !self.legal_range(hash) {
+            panic!("hash {} is out of range", hash);
+        }
+        let node_ref = self.lookup(hash);
+        if let Some(node) = node_ref {
+            let mut node = node.try_lock().unwrap();
+            node.resource.insert(hash, hash);
+        } else {
+            panic!("node is not found");
         }
     }
 }
