@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub trait HashRingInterface<T: std::hash::Hash> {
-    fn insert(&mut self, hash: T);
+    fn add_node(&mut self, hash: T);
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>>;
     fn move_resource(&self, dest: T, src: T, is_delete: bool);
     fn add_resource(&self, hash: T);
@@ -39,7 +39,7 @@ impl<
             + num_traits::PrimInt,
     > HashRingInterface<T> for HashRing<T>
 {
-    fn insert(&mut self, hash: T) {
+    fn add_node(&mut self, hash: T) {
         if !HashRing::legal_range(self, hash) {
             panic!("hash {} is out of range", hash);
         }
@@ -293,22 +293,22 @@ mod test {
         assert_eq!(h.distance(5, 18), 13);
     }
     #[test]
-    fn hash_ring_insert_lookup() {
+    fn hash_ring_add_node_lookup() {
         let mut h = HashRing::new(5);
-        h.insert(3);
+        h.add_node(3);
         let _node_ref = h.lookup(3);
     }
 
     #[test]
-    fn multiple_insert_lookup() {
+    fn multiple_add_node_lookup() {
         let mut h = HashRing::new(5);
-        h.insert(5);
+        h.add_node(5);
         h.print();
-        h.insert(12);
+        h.add_node(12);
         h.print();
-        h.insert(18);
+        h.add_node(18);
         h.print();
-        h.insert(29);
+        h.add_node(29);
         h.print();
         let lookup_5 = h.lookup(5);
         assert!(lookup_5.is_some());
@@ -323,8 +323,8 @@ mod test {
     #[test]
     fn add_resource() {
         let mut h = HashRing::new(5);
-        h.insert(12);
-        h.insert(18);
+        h.add_node(12);
+        h.add_node(18);
         h.add_resource(24);
         h.add_resource(21);
         h.add_resource(16);
@@ -356,8 +356,8 @@ mod test {
     #[test]
     fn move_resource() {
         let mut h = HashRing::new(5);
-        h.insert(12);
-        h.insert(18);
+        h.add_node(12);
+        h.add_node(18);
         h.add_resource(24);
         h.add_resource(21);
         h.add_resource(16);
