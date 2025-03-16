@@ -1,16 +1,18 @@
 use core::panic;
+use num_traits;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use num_traits;
-
-pub trait HashRingInterface<T> {
+pub trait HashRingInterface<T: std::hash::Hash> {
     fn insert(&mut self, hash: T);
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>>;
+    fn move_resource(&self, dest: T, src: T, is_delete: bool);
 }
 
 #[derive(Debug)]
 pub struct Node<T> {
     value: T,
+    resource: HashMap<T, T>,
     prev: Option<Arc<Mutex<Node<T>>>>,
     next: Option<Arc<Mutex<Node<T>>>>,
 }
@@ -24,6 +26,7 @@ pub struct HashRing<T> {
 
 impl<
         T: std::fmt::Debug
+            + std::hash::Hash
             + std::fmt::Display
             + PartialOrd
             + PartialEq
@@ -133,6 +136,31 @@ impl<
             current = next_node;
         }
         current
+    }
+    fn move_resource(&self, dest: T, src: T, is_delete: bool) {
+        let mut delete_list = vec![];
+        let dest_node = self.lookup(dest);
+        let src_node = self.lookup(src);
+        if dest_node.is_none() || src_node.is_none() {
+            panic!("dest or src is not found");
+        }
+
+        if let Some(src_node_ref) = src_node {
+            let mut _src_node = src_node_ref.try_lock().unwrap();
+            for (key, value) in _src_node.resource.iter() {
+                if self.distance(*key, dest) < self.distance(*key, src) || is_delete {
+                    if let Some(ref dest_node_ref) = dest_node {
+                        let mut dest_node = dest_node_ref.try_lock().unwrap();
+                        dest_node.resource.insert(*key, *value);
+                        delete_list.push(*key);
+                    }
+                    delete_list.push(*key);
+                }
+            }
+            for item in delete_list {
+                _src_node.resource.remove(&item);
+            }
+        }
     }
 }
 impl<
