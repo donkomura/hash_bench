@@ -336,7 +336,7 @@ mod test {
             let node = node.try_lock().unwrap();
             assert_eq!(node.value, 5);
         }
-        let want = vec![5, 12, 18, 29];
+        let want = vec![5, 29, 18, 12]; // 反時計回り
         let got = h.nodes();
         assert_eq!(want, got);
     }
