@@ -57,45 +57,14 @@ impl<
         }));
 
         let next_node_value: T;
-        if let Some(ref found) = self.lookup(hash) {
-            let node_ref = Arc::clone(found);
-            let mut node = node_ref.try_lock().unwrap();
-            let prev_node_ref = node
-                .prev
-                .take()
-                .unwrap_or_else(|| panic!("Node {} is found, but it is invalid node", hash));
-            node.prev = Some(Arc::clone(&new_node));
-            next_node_value = *node.value();
-            drop(node);
-
-            let mut new_node_mut = new_node.try_lock().unwrap();
-            new_node_mut.prev = Some(Arc::clone(&prev_node_ref));
-            new_node_mut.next = Some(Arc::clone(&node_ref));
-            drop(new_node_mut);
-
-            let mut prev_node = prev_node_ref.try_lock().unwrap();
-            prev_node.next = Some(Arc::clone(&new_node));
-        } else if let Some(head_ref) = &self.head {
+        if let Some(ref found) = self.lookup(hash).clone() {
+            // すでにノードが存在する場合はその前に挿入する
+            self.add_node_prev(hash, &found, &new_node);
+            next_node_value = self.get_node_value(&Some(found.clone()));
+        } else if let Some(head_ref) = &self.head.clone() {
             // head がある場合は head の前（一番後ろ）に挿入する
-            let head_prev_ref_clone = {
-                let head = head_ref.try_lock().unwrap();
-                head.next.clone()
-            };
-            if let Some(ref head_prev_ref) = head_prev_ref_clone {
-                let mut head_prev = head_prev_ref.try_lock().unwrap();
-                let mut new_node_mut = new_node.try_lock().unwrap();
-                head_prev.next = Some(Arc::clone(&new_node));
-                new_node_mut.prev = Some(Arc::clone(head_prev_ref));
-                new_node_mut.next = Some(Arc::clone(head_ref));
-                drop(new_node_mut);
-                drop(head_prev);
-
-                let mut head = head_ref.try_lock().unwrap();
-                head.prev = Some(Arc::clone(&new_node));
-                next_node_value = *head.value();
-            } else {
-                panic!("head.next is None");
-            }
+            self.add_node_prev(hash, &head_ref, &new_node);
+            next_node_value = self.get_node_value(&Some(head_ref.clone()));
         } else {
             // head がない場合はそのまま head に設定する
             self.head = Some(Arc::clone(&new_node));
@@ -104,43 +73,42 @@ impl<
             head_mut.prev = Some(Arc::clone(&new_node));
             next_node_value = hash;
         }
-        self.head = Some(Arc::clone(&new_node));
-        self.move_resource(hash, next_node_value, false);
         println!("add node: {}, and now moving resources...", hash);
+        self.move_resource(hash, next_node_value, false);
+        let head_value = self.get_head_value();
+        if hash < head_value {
+            self.head = Some(Arc::clone(&new_node));
+        }
     }
 
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>> {
         let mut current = self.head.clone();
-        let head_value: T = {
-            if let Some(head_node) = self.head.clone() {
-                *head_node.try_lock().unwrap().value()
-            } else {
-                num_traits::Zero::zero()
-            }
-        };
+        let mut current_value: T = self.get_node_value(&current);
+        let mut next_node_ref = self.get_next_node_ref(&current);
+        let mut next_node_value = self.get_node_value(&next_node_ref);
+        let head_value: T = self.get_head_value();
 
-        while let Some(node) = &current {
-            let current_value: T;
-            let next_node = {
-                let node = node.try_lock().unwrap();
-                current_value = *node.value();
-                node.next.clone()
-            };
-            if let Some(next) = next_node.clone() {
-                let next_node = next.try_lock().unwrap();
-                if current_value == hash {
-                    break;
-                }
-                if *next_node.value() == head_value {
-                    break;
-                }
-                if self.distance(hash, current_value) < self.distance(hash, *next_node.value()) {
-                    break;
-                }
+        while self.distance(current_value, hash) > self.distance(next_node_value, hash) {
+            println!(
+                "looking for hash: {}, current: {}, next: {}",
+                hash, current_value, next_node_value
+            );
+            if current_value == hash {
+                break;
             }
-            current = next_node;
+            if next_node_value == head_value {
+                break;
+            }
+            current = next_node_ref;
+            current_value = self.get_node_value(&current);
+            next_node_ref = self.get_next_node_ref(&current);
+            next_node_value = self.get_node_value(&next_node_ref);
         }
-        current
+        println!("hash {} found in node {}", hash, current_value);
+        if current_value == hash {
+            return current;
+        }
+        next_node_ref
     }
 
     fn move_resource(&self, dest: T, src: T, is_delete: bool) {
@@ -157,9 +125,11 @@ impl<
             for (key, value) in _src_node.resource.iter() {
                 if self.distance(*key, dest) < self.distance(*key, src) || is_delete {
                     println!(
-                        "{} will move because distance dest: {}, distance src: {}",
+                        "{} will move because distance dest {}: {}, distance src {}: {}",
                         *key,
+                        dest,
                         self.distance(*key, dest),
+                        src,
                         self.distance(*key, src)
                     );
                     resources.push((*key, *value));
@@ -215,7 +185,52 @@ impl<
             max: num_traits::FromPrimitive::from_i64((1 << k) - 1).unwrap(),
         }
     }
+    fn add_node_prev(
+        &mut self,
+        hash: T,
+        target: &Arc<Mutex<Node<T>>>,
+        new_node: &Arc<Mutex<Node<T>>>,
+    ) {
+        let mut node = HashRing::get_node(&target);
+        let prev_node_ref = {
+            match node.prev.clone() {
+                Some(prev) => prev,
+                None => panic!("Node {} is found, but it is invalid node", hash),
+            }
+        };
+        node.prev = Some(Arc::clone(&new_node));
+        drop(node);
 
+        let mut new_node_mut = new_node.try_lock().unwrap();
+        new_node_mut.prev = Some(Arc::clone(&prev_node_ref));
+        new_node_mut.next = Some(Arc::clone(&target));
+        drop(new_node_mut);
+
+        let mut prev_node = prev_node_ref.try_lock().unwrap();
+        prev_node.next = Some(Arc::clone(&new_node));
+    }
+    fn get_head_value(&self) -> T {
+        self.get_node_value(&self.head)
+    }
+    fn get_node_value(&self, node_ref: &Option<Arc<Mutex<Node<T>>>>) -> T {
+        if let Some(node_ref) = node_ref {
+            return *node_ref.try_lock().unwrap().value();
+        }
+        num_traits::Zero::zero()
+    }
+    fn get_node(node: &Arc<Mutex<Node<T>>>) -> std::sync::MutexGuard<Node<T>> {
+        node.try_lock().unwrap()
+    }
+    fn get_next_node_ref(
+        &self,
+        node_ref: &Option<Arc<Mutex<Node<T>>>>,
+    ) -> Option<Arc<Mutex<Node<T>>>> {
+        if let Some(node_ref) = node_ref {
+            let node = node_ref.try_lock().unwrap();
+            return node.next.clone();
+        }
+        None
+    }
     pub fn print(&self) {
         let nodes = self.nodes();
         println!("min: {}, max: {}", self.min, self.max);
@@ -352,7 +367,7 @@ mod test {
             let node = node.try_lock().unwrap();
             assert_eq!(*node.value(), 5);
         }
-        let want = vec![29, 5, 12, 18];
+        let want = vec![5, 12, 18, 29];
         let got = h.nodes();
         assert_eq!(want, got);
     }
