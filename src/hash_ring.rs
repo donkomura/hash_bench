@@ -96,17 +96,9 @@ impl<
             head_mut.prev = Some(Arc::clone(new_node));
             next_node_value = hash;
         }
-        let head_value: T = {
-            if let Some(head_node) = self.head.clone() {
-                head_node.try_lock().unwrap().value
-            } else {
-                num_traits::Zero::zero()
-            }
-        };
-        if hash < head_value {
-            self.head = Some(Arc::clone(new_node));
-        }
+        self.head = Some(Arc::clone(new_node));
         self.move_resource(hash, next_node_value, false);
+        println!("add node: {}, and now moving resources...", hash);
     }
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>> {
         let mut current = self.head.clone();
@@ -127,14 +119,13 @@ impl<
             };
             if let Some(next) = next_node.clone() {
                 let next_node = next.try_lock().unwrap();
-                if self.distance(hash, current_value) < self.distance(hash, next_node.value) {
+                if current_value == hash {
                     break;
                 }
-
                 if next_node.value == head_value {
                     break;
                 }
-                if current_value == hash {
+                if self.distance(hash, current_value) < self.distance(hash, next_node.value) {
                     break;
                 }
             }
@@ -152,8 +143,15 @@ impl<
 
         if let Some(src_node_ref) = src_node {
             let mut _src_node = src_node_ref.try_lock().unwrap();
+            assert!(src == _src_node.value);
             for (key, value) in _src_node.resource.iter() {
                 if self.distance(*key, dest) < self.distance(*key, src) || is_delete {
+                    println!(
+                        "{} will move because distance dest: {}, distance src: {}",
+                        *key,
+                        self.distance(*key, dest),
+                        self.distance(*key, src)
+                    );
                     resources.push((*key, *value));
                 }
             }
@@ -163,8 +161,9 @@ impl<
         }
         if let Some(dest_node_ref) = dest_node {
             let mut dest_node = dest_node_ref.try_lock().unwrap();
-            for (key, value) in resources.iter() {
-                dest_node.resource.insert(*key, *value);
+            assert!(dest == dest_node.value);
+            for (key, value) in resources {
+                dest_node.resource.insert(key, value);
             }
         }
     }
@@ -335,7 +334,7 @@ mod test {
             let node = node.try_lock().unwrap();
             assert_eq!(node.value, 5);
         }
-        let want = vec![5, 12, 18, 29];
+        let want = vec![29, 5, 12, 18];
         let got = h.nodes();
         assert_eq!(want, got);
     }
@@ -425,19 +424,25 @@ mod test {
         h.print();
         assert_eq!(h.resources().get(&18).unwrap().len(), 1);
         assert_eq!(h.resources().get(&12).unwrap().len(), 8);
-        h.add_node(1);
+        h.add_node(5);
         h.print();
-        assert_eq!(h.resources().get(&1).unwrap().len(), 5);
-        assert_eq!(h.resources().get(&12).unwrap().len(), 3);
+        h.add_node(27);
+        h.print();
+        h.add_node(30);
+        h.print();
+        assert_eq!(h.resources().get(&5).unwrap().len(), 1);
+        assert_eq!(h.resources().get(&12).unwrap().len(), 2);
         assert_eq!(h.resources().get(&18).unwrap().len(), 1);
+        assert_eq!(h.resources().get(&27).unwrap().len(), 3);
+        assert_eq!(h.resources().get(&30).unwrap().len(), 2);
+        assert_eq!(h.resources().get(&5), Some(&vec![(2, 2)]));
+        assert_eq!(h.resources().get(&12), Some(&vec![(7, 7), (10, 10)]));
+        assert_eq!(h.resources().get(&18), Some(&vec![(16, 16)]));
         assert_eq!(
-            h.resources().get(&1),
-            Some(&vec![(21, 21), (23, 23), (24, 24), (28, 28), (29, 29)])
+            h.resources().get(&27),
+            Some(&vec![(21, 21), (23, 23), (24, 24)])
         );
-        assert_eq!(
-            h.resources().get(&12),
-            Some(&vec![(2, 2), (7, 7), (10, 10)])
-        );
+        assert_eq!(h.resources().get(&30), Some(&vec![(28, 28), (29, 29)]));
         assert_eq!(h.resources().get(&18), Some(&vec![(16, 16)]));
     }
 }
