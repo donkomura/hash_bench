@@ -41,7 +41,6 @@ impl<
         }
         let new_node = &Arc::new(Mutex::new(Node {
             value: hash,
-            resource: HashMap::new(),
             prev: None,
             next: None,
         }));
