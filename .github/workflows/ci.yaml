@@ -1,0 +1,61 @@
+name: Cargo Build & Test
+
+on:
+  push:
+    branches:
+        - main
+  pull_request:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        BUILD_TARGET: [release, dev] # refers to a cargo profile
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.BUILD_TARGET}}
+
+      - name: Check
+        run: cargo check --profile ${{ matrix.BUILD_TARGET }}
+
+      - name: Build with profiling
+        run: cargo build --profile ${{ matrix.BUILD_TARGET }}
+
+      - name: Test
+        run: cargo test --profile ${{ matrix.BUILD_TARGET }} --all -- --nocapture
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy --all --all-targets
+
+  rustfmt:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Run rustfmt
+        run: cargo fmt --all -- --check

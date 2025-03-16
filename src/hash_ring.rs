@@ -43,56 +43,54 @@ impl<
         if !HashRing::legal_range(self, hash) {
             panic!("hash {} is out of range", hash);
         }
-        let new_node = Arc::new(Mutex::new(Node {
+        let new_node = &Arc::new(Mutex::new(Node {
             value: hash,
             resource: HashMap::new(),
             prev: None,
             next: None,
         }));
 
-        if let Some(found) = self.lookup(hash) {
-            let node_ref = Arc::clone(&found);
+        if let Some(ref found) = self.lookup(hash) {
+            let node_ref = &Arc::clone(found);
             let mut node = node_ref.try_lock().unwrap();
-            let next_node_ref = node
+            let next_node_ref = &node
                 .next
                 .take()
-                .expect(&format!("Node {} is found, but it is invalid node", hash));
-            node.next = Some(Arc::clone(&new_node));
+                .unwrap_or_else(|| panic!("Node {} is found, but it is invalid node", hash));
+            node.next = Some(Arc::clone(new_node));
             drop(node);
-            let next_node_ref_clone = Arc::clone(&next_node_ref);
+            let next_node_ref_clone = &Arc::clone(next_node_ref);
             let mut new_node_mut = new_node.try_lock().unwrap();
-            new_node_mut.prev = Some(Arc::clone(&node_ref));
-            new_node_mut.next = Some(Arc::clone(&next_node_ref));
+            new_node_mut.prev = Some(Arc::clone(node_ref));
+            new_node_mut.next = Some(Arc::clone(next_node_ref));
 
             let mut next_node = next_node_ref_clone.try_lock().unwrap();
-            next_node.prev = Some(Arc::clone(&new_node));
-        } else {
-            if let Some(head_ref) = &self.head {
-                // head がある場合は head の前（一番後ろ）に挿入する
-                let head_prev_ref_clone = {
-                    let head = head_ref.try_lock().unwrap();
-                    head.next.clone()
-                };
-                if let Some(head_prev_ref) = head_prev_ref_clone {
-                    {
-                        let mut head_prev = head_prev_ref.try_lock().unwrap();
-                        let mut new_node_mut = new_node.try_lock().unwrap();
-                        head_prev.next = Some(Arc::clone(&new_node));
-                        new_node_mut.prev = Some(Arc::clone(&head_prev_ref));
-                        new_node_mut.next = Some(Arc::clone(&head_ref));
-                    }
-                    let mut head = head_ref.try_lock().unwrap();
-                    head.prev = Some(Arc::clone(&new_node));
-                } else {
-                    panic!("head.next is None");
+            next_node.prev = Some(Arc::clone(new_node));
+        } else if let Some(head_ref) = &self.head {
+            // head がある場合は head の前（一番後ろ）に挿入する
+            let head_prev_ref_clone = {
+                let head = head_ref.try_lock().unwrap();
+                head.next.clone()
+            };
+            if let Some(ref head_prev_ref) = head_prev_ref_clone {
+                {
+                    let mut head_prev = head_prev_ref.try_lock().unwrap();
+                    let mut new_node_mut = new_node.try_lock().unwrap();
+                    head_prev.next = Some(Arc::clone(new_node));
+                    new_node_mut.prev = Some(Arc::clone(head_prev_ref));
+                    new_node_mut.next = Some(Arc::clone(head_ref));
                 }
+                let mut head = head_ref.try_lock().unwrap();
+                head.prev = Some(Arc::clone(new_node));
             } else {
-                // head がない場合はそのまま head に設定する
-                self.head = Some(Arc::clone(&new_node));
-                let mut head_mut = self.head.as_ref().unwrap().try_lock().unwrap();
-                head_mut.next = Some(Arc::clone(&new_node));
-                head_mut.prev = Some(Arc::clone(&new_node));
+                panic!("head.next is None");
             }
+        } else {
+            // head がない場合はそのまま head に設定する
+            self.head = Some(Arc::clone(new_node));
+            let mut head_mut = self.head.as_ref().unwrap().try_lock().unwrap();
+            head_mut.next = Some(Arc::clone(new_node));
+            head_mut.prev = Some(Arc::clone(new_node));
         }
         let head_value: T = {
             if let Some(head_node) = self.head.clone() {
@@ -102,7 +100,7 @@ impl<
             }
         };
         if hash < head_value {
-            self.head = Some(Arc::clone(&new_node));
+            self.head = Some(Arc::clone(new_node));
         }
     }
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>> {
@@ -194,7 +192,7 @@ impl<
     pub fn new(k: u32) -> Self {
         Self {
             head: None,
-            k: k,
+            k,
             min: num_traits::Zero::zero(),
             max: num_traits::FromPrimitive::from_i64((1 << k) - 1).unwrap(),
         }
@@ -233,13 +231,14 @@ impl<
         self.min <= hash && hash <= self.max
     }
     fn distance(&self, a: T, b: T) -> T {
-        if a == b {
-            return num_traits::Zero::zero();
-        } else if a < b {
-            return b - a;
+        match a.cmp(&b) {
+            std::cmp::Ordering::Equal => num_traits::Zero::zero(),
+            std::cmp::Ordering::Less => b - a,
+            std::cmp::Ordering::Greater => {
+                let x: T = num_traits::FromPrimitive::from_i64(2).unwrap();
+                x.pow(self.k) + (b - a)
+            }
         }
-        let x: T = num_traits::FromPrimitive::from_i64(2).unwrap();
-        return x.pow(self.k) + (b - a);
     }
 }
 
@@ -274,7 +273,7 @@ mod test {
         h.insert(29);
         h.print();
         let lookup_5 = h.lookup(5);
-        assert_eq!(lookup_5.is_some(), true);
+        assert!(lookup_5.is_some());
         if let Some(node) = lookup_5 {
             let node = node.try_lock().unwrap();
             assert_eq!(node.value, 5);
