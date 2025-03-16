@@ -76,6 +76,7 @@ impl<
             let mut prev_node = prev_node_ref.try_lock().unwrap();
             prev_node.next = Some(Arc::clone(&new_node));
         } else if let Some(head_ref) = &self.head {
+            // head がある場合は head の前（一番後ろ）に挿入する
             let head_prev_ref_clone = {
                 let head = head_ref.try_lock().unwrap();
                 head.next.clone()
@@ -96,6 +97,7 @@ impl<
                 panic!("head.next is None");
             }
         } else {
+            // head がない場合はそのまま head に設定する
             self.head = Some(Arc::clone(&new_node));
             let mut head_mut = self.head.as_ref().unwrap().try_lock().unwrap();
             head_mut.next = Some(Arc::clone(&new_node));
