@@ -1,5 +1,5 @@
-use murmurhash3::murmurhash3_x86_32 as mmh3;
 use bitvec::prelude::BitVec;
+use murmurhash3::murmurhash3_x86_32 as mmh3;
 
 pub struct BloomFilter {
     n: u32,
@@ -20,7 +20,7 @@ impl BloomFilter {
             m: m,
             k: k,
             f: f,
-            bit_array: vec, 
+            bit_array: vec,
         }
     }
 
@@ -48,7 +48,10 @@ impl BloomFilter {
         return true;
     }
     pub fn print(self) {
-        println!("parameters: n = {}, m = {}, k = {}, f = {}", self.n, self.m, self.k, self.f);
+        println!(
+            "parameters: n = {}, m = {}, k = {}, f = {}",
+            self.n, self.m, self.k, self.f
+        );
         print!("bit_array = [ ");
         for v in self.bit_array.as_bitslice() {
             print!("{} ", v);

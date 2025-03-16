@@ -15,7 +15,5 @@ fn bench_bloom_filter(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches,
-    bench_bloom_filter,
-);
+criterion_group!(benches, bench_bloom_filter,);
 criterion_main!(benches);
