@@ -73,13 +73,12 @@ impl<
             head_mut.prev = Some(Arc::clone(&new_node));
             next_node_value = hash;
         }
-        self.head = Some(Arc::clone(&new_node));
-        self.move_resource(hash, next_node_value, false);
-        // let head_value = self.get_head_value();
-        // if hash < head_value {
-        //     self.head = Some(Arc::clone(&new_node));
-        // }
         println!("add node: {}, and now moving resources...", hash);
+        self.move_resource(hash, next_node_value, false);
+        let head_value = self.get_head_value();
+        if hash < head_value {
+            self.head = Some(Arc::clone(&new_node));
+        }
     }
 
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>> {
@@ -89,7 +88,7 @@ impl<
         let mut next_node_value = self.get_node_value(&next_node_ref);
         let head_value: T = self.get_head_value();
 
-        while self.distance(hash, current_value) > self.distance(hash, next_node_value) {
+        while self.distance(current_value, hash) > self.distance(next_node_value, hash) {
             println!(
                 "looking for hash: {}, current: {}, next: {}",
                 hash, current_value, next_node_value
@@ -106,7 +105,10 @@ impl<
             next_node_value = self.get_node_value(&next_node_ref);
         }
         println!("hash {} found in node {}", hash, current_value);
-        current
+        if current_value == hash {
+            return current;
+        }
+        next_node_ref
     }
 
     fn move_resource(&self, dest: T, src: T, is_delete: bool) {
@@ -123,9 +125,11 @@ impl<
             for (key, value) in _src_node.resource.iter() {
                 if self.distance(*key, dest) < self.distance(*key, src) || is_delete {
                     println!(
-                        "{} will move because distance dest: {}, distance src: {}",
+                        "{} will move because distance dest {}: {}, distance src {}: {}",
                         *key,
+                        dest,
                         self.distance(*key, dest),
+                        src,
                         self.distance(*key, src)
                     );
                     resources.push((*key, *value));
@@ -363,7 +367,7 @@ mod test {
             let node = node.try_lock().unwrap();
             assert_eq!(*node.value(), 5);
         }
-        let want = vec![29, 5, 12, 18];
+        let want = vec![5, 12, 18, 29];
         let got = h.nodes();
         assert_eq!(want, got);
     }
