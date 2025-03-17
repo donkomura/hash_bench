@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 pub trait HashRingInterface<T: std::hash::Hash> {
     fn add_node(&mut self, hash: T);
+    fn remove_node(&mut self, hash: T);
     fn lookup(&self, hash: T) -> Option<Arc<Mutex<Node<T>>>>;
     fn move_resource(&self, dest: T, src: T, is_delete: bool);
     fn add_resource(&self, hash: T);
@@ -59,11 +60,11 @@ impl<
         let next_node_value: T;
         if let Some(ref found) = self.lookup(hash).clone() {
             // すでにノードが存在する場合はその前に挿入する
-            self.add_node_prev(hash, &found, &new_node);
+            self.add_node_prev(hash, found, &new_node);
             next_node_value = self.get_node_value(&Some(found.clone()));
-        } else if let Some(head_ref) = &self.head.clone() {
+        } else if let Some(ref head_ref) = &self.head.clone() {
             // head がある場合は head の前（一番後ろ）に挿入する
-            self.add_node_prev(hash, &head_ref, &new_node);
+            self.add_node_prev(hash, head_ref, &new_node);
             next_node_value = self.get_node_value(&Some(head_ref.clone()));
         } else {
             // head がない場合はそのまま head に設定する
@@ -78,6 +79,35 @@ impl<
         let head_value = self.get_head_value();
         if hash < head_value {
             self.head = Some(Arc::clone(&new_node));
+        }
+    }
+
+    fn remove_node(&mut self, hash: T) {
+        let node_ref = self.lookup(hash);
+        let node_value = self.get_node_value(&node_ref);
+        let next_value = self.get_next_value(&node_ref);
+        if node_value != hash {
+            panic!("node {} is not found", hash);
+        }
+        self.move_resource(next_value, node_value, true);
+
+        let head_value = self.get_head_value();
+        let head_next_value = self.get_next_value(&self.head.clone());
+        let prev_node_ref = self.get_prev_node_ref(&node_ref);
+        let next_node_ref = self.get_next_node_ref(&node_ref);
+        if let Some(prev_node) = &prev_node_ref {
+            let mut prev = prev_node.try_lock().unwrap();
+            prev.next = next_node_ref.clone();
+        }
+        if let Some(next_node) = &next_node_ref {
+            let mut next = next_node.try_lock().unwrap();
+            next.prev = prev_node_ref.clone();
+        }
+        if head_value == head_next_value {
+            self.head = next_node_ref.clone();
+            if head_value == hash {
+                self.head = None;
+            }
         }
     }
 
@@ -191,23 +221,23 @@ impl<
         target: &Arc<Mutex<Node<T>>>,
         new_node: &Arc<Mutex<Node<T>>>,
     ) {
-        let mut node = HashRing::get_node(&target);
-        let prev_node_ref = {
+        let mut node = HashRing::get_node(target);
+        let prev_node_ref = &{
             match node.prev.clone() {
                 Some(prev) => prev,
                 None => panic!("Node {} is found, but it is invalid node", hash),
             }
         };
-        node.prev = Some(Arc::clone(&new_node));
+        node.prev = Some(Arc::clone(new_node));
         drop(node);
 
         let mut new_node_mut = new_node.try_lock().unwrap();
-        new_node_mut.prev = Some(Arc::clone(&prev_node_ref));
-        new_node_mut.next = Some(Arc::clone(&target));
+        new_node_mut.prev = Some(Arc::clone(prev_node_ref));
+        new_node_mut.next = Some(Arc::clone(target));
         drop(new_node_mut);
 
         let mut prev_node = prev_node_ref.try_lock().unwrap();
-        prev_node.next = Some(Arc::clone(&new_node));
+        prev_node.next = Some(Arc::clone(new_node));
     }
     fn get_head_value(&self) -> T {
         self.get_node_value(&self.head)
@@ -215,6 +245,13 @@ impl<
     fn get_node_value(&self, node_ref: &Option<Arc<Mutex<Node<T>>>>) -> T {
         if let Some(node_ref) = node_ref {
             return *node_ref.try_lock().unwrap().value();
+        }
+        num_traits::Zero::zero()
+    }
+    fn get_next_value(&self, node_ref: &Option<Arc<Mutex<Node<T>>>>) -> T {
+        if let Some(next_node_ref) = self.get_next_node_ref(node_ref) {
+            let next = next_node_ref.try_lock().unwrap();
+            return *next.value();
         }
         num_traits::Zero::zero()
     }
@@ -228,6 +265,16 @@ impl<
         if let Some(node_ref) = node_ref {
             let node = node_ref.try_lock().unwrap();
             return node.next.clone();
+        }
+        None
+    }
+    fn get_prev_node_ref(
+        &self,
+        node_ref: &Option<Arc<Mutex<Node<T>>>>,
+    ) -> Option<Arc<Mutex<Node<T>>>> {
+        if let Some(node_ref) = node_ref {
+            let node = node_ref.try_lock().unwrap();
+            return node.prev.clone();
         }
         None
     }
@@ -480,5 +527,22 @@ mod test {
         );
         assert_eq!(h.resources().get(&30), Some(&vec![(28, 28), (29, 29)]));
         assert_eq!(h.resources().get(&18), Some(&vec![(16, 16)]));
+
+        h.remove_node(12);
+        h.print();
+        assert_eq!(h.resources().get(&5).unwrap().len(), 1);
+        assert_eq!(h.resources().get(&18).unwrap().len(), 3);
+        assert_eq!(h.resources().get(&27).unwrap().len(), 3);
+        assert_eq!(h.resources().get(&30).unwrap().len(), 2);
+        assert_eq!(h.resources().get(&5), Some(&vec![(2, 2)]));
+        assert_eq!(
+            h.resources().get(&18),
+            Some(&vec![(7, 7), (10, 10), (16, 16)])
+        );
+        assert_eq!(
+            h.resources().get(&27),
+            Some(&vec![(21, 21), (23, 23), (24, 24)])
+        );
+        assert_eq!(h.resources().get(&30), Some(&vec![(28, 28), (29, 29)]));
     }
 }
