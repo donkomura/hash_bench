@@ -63,9 +63,11 @@ impl BloomFilter {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::log;
 
     #[test]
     fn calc_parameters() {
+        log::init_test_logger();
         let b = BloomFilter::new(10, 0.01);
         assert_eq!(b.n, 10);
         assert_eq!(b.f, 0.01);
@@ -74,6 +76,7 @@ mod test {
     }
     #[test]
     fn insert_lookup_must_found() {
+        log::init_test_logger();
         let mut b = BloomFilter::new(10, 0.01);
         b.insert(b"1");
         assert!(b.lookup(b"1"));

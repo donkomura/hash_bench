@@ -1,4 +1,5 @@
 use core::panic;
+use log::{info, warn};
 use num_traits;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -74,7 +75,7 @@ impl<
             head_mut.prev = Some(Arc::clone(&new_node));
             next_node_value = hash;
         }
-        println!("add node: {}, and now moving resources...", hash);
+        info!("add node: {}, and now moving resources...", hash);
         self.move_resource(hash, next_node_value, false);
         let head_value = self.get_head_value();
         if hash < head_value {
@@ -87,8 +88,13 @@ impl<
         let node_value = self.get_node_value(&node_ref);
         let next_value = self.get_next_value(&node_ref);
         if node_value != hash {
-            panic!("node {} is not found", hash);
+            warn!("node {} is not found, skip removing", hash);
+            return;
         }
+        info!(
+            "remove node: {}, and now moving resources to {}...",
+            node_value, next_value
+        );
         self.move_resource(next_value, node_value, true);
 
         let head_value = self.get_head_value();
@@ -119,7 +125,7 @@ impl<
         let head_value: T = self.get_head_value();
 
         while self.distance(current_value, hash) > self.distance(next_node_value, hash) {
-            println!(
+            info!(
                 "looking for hash: {}, current: {}, next: {}",
                 hash, current_value, next_node_value
             );
@@ -134,7 +140,7 @@ impl<
             next_node_ref = self.get_next_node_ref(&current);
             next_node_value = self.get_node_value(&next_node_ref);
         }
-        println!("hash {} found in node {}", hash, current_value);
+        info!("hash {} found in node {}", hash, current_value);
         if current_value == hash {
             return current;
         }
@@ -146,7 +152,7 @@ impl<
         let dest_node = self.lookup(dest);
         let src_node = self.lookup(src);
         if dest_node.is_none() || src_node.is_none() {
-            panic!("dest or src is not found");
+            panic!("dest {} or src {} is not found", dest, src);
         }
 
         if let Some(src_node_ref) = src_node {
@@ -154,7 +160,7 @@ impl<
             assert!(src == *_src_node.value());
             for (key, value) in _src_node.resource.iter() {
                 if self.distance(*key, dest) < self.distance(*key, src) || is_delete {
-                    println!(
+                    info!(
                         "{} will move because distance dest {}: {}, distance src {}: {}",
                         *key,
                         dest,
@@ -187,6 +193,8 @@ impl<
         if let Some(node) = node_ref {
             let mut node = node.try_lock().unwrap();
             node.resource.insert(hash, hash);
+
+            info!("add resource {} to node {}", hash, node.value);
         } else {
             panic!("node is not found");
         }
@@ -374,9 +382,11 @@ impl<
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::log;
 
     #[test]
     fn distance_ring_5() {
+        log::init_test_logger();
         let h = HashRing::new(5);
         assert_eq!(h.distance(0, 5), 5);
         assert_eq!(h.distance(5, 12), 7);
@@ -392,6 +402,7 @@ mod test {
 
     #[test]
     fn hash_ring_add_node_lookup() {
+        log::init_test_logger();
         let mut h = HashRing::new(5);
         h.add_node(3);
         let _node_ref = h.lookup(3);
@@ -399,6 +410,7 @@ mod test {
 
     #[test]
     fn multiple_add_node_lookup() {
+        log::init_test_logger();
         let mut h = HashRing::new(5);
         h.add_node(5);
         h.print();
@@ -421,6 +433,7 @@ mod test {
 
     #[test]
     fn add_resource() {
+        log::init_test_logger();
         let mut h = HashRing::new(5);
         h.add_node(12);
         h.add_node(18);
@@ -455,6 +468,7 @@ mod test {
 
     #[test]
     fn move_resource() {
+        log::init_test_logger();
         let mut h = HashRing::new(5);
         h.add_node(12);
         h.add_node(18);
@@ -492,6 +506,7 @@ mod test {
 
     #[test]
     fn add_resource_with_resource_move() {
+        log::init_test_logger();
         let mut h = HashRing::new(5);
         h.add_node(12);
         h.add_node(18);
