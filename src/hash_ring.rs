@@ -61,11 +61,11 @@ impl<
         let next_node_value: T;
         if let Some(ref found) = self.lookup(hash).clone() {
             // すでにノードが存在する場合はその前に挿入する
-            self.add_node_prev(hash, found, &new_node);
+            self.add_node_prev(found, &new_node);
             next_node_value = self.get_node_value(&Some(found.clone()));
         } else if let Some(ref head_ref) = &self.head.clone() {
             // head がある場合は head の前（一番後ろ）に挿入する
-            self.add_node_prev(hash, head_ref, &new_node);
+            self.add_node_prev(head_ref, &new_node);
             next_node_value = self.get_node_value(&Some(head_ref.clone()));
         } else {
             // head がない場合はそのまま head に設定する
@@ -223,29 +223,26 @@ impl<
             max: num_traits::FromPrimitive::from_i64((1 << k) - 1).unwrap(),
         }
     }
-    fn add_node_prev(
-        &mut self,
-        hash: T,
-        target: &Arc<Mutex<Node<T>>>,
-        new_node: &Arc<Mutex<Node<T>>>,
-    ) {
-        let mut node = HashRing::get_node(target);
-        let prev_node_ref = &{
-            match node.prev.clone() {
-                Some(prev) => prev,
-                None => panic!("Node {} is found, but it is invalid node", hash),
-            }
-        };
+
+    fn add_node_prev(&mut self, target: &Arc<Mutex<Node<T>>>, new_node: &Arc<Mutex<Node<T>>>) {
+        let prev_node_ref = {
+            let mut node = target.try_lock().unwrap();
+            let prev = node
+                .prev
+                .clone()
+                .expect("Node is found, but it is an invalid node: prev does not set");
         node.prev = Some(Arc::clone(new_node));
-        drop(node);
-
+            prev
+        };
+        {
         let mut new_node_mut = new_node.try_lock().unwrap();
-        new_node_mut.prev = Some(Arc::clone(prev_node_ref));
+            new_node_mut.prev = Some(Arc::clone(&prev_node_ref));
         new_node_mut.next = Some(Arc::clone(target));
-        drop(new_node_mut);
-
+        }
+        {
         let mut prev_node = prev_node_ref.try_lock().unwrap();
         prev_node.next = Some(Arc::clone(new_node));
+        }
     }
     fn get_head_value(&self) -> T {
         self.get_node_value(&self.head)
@@ -262,9 +259,6 @@ impl<
             return *next.value();
         }
         num_traits::Zero::zero()
-    }
-    fn get_node(node: &Arc<Mutex<Node<T>>>) -> std::sync::MutexGuard<Node<T>> {
-        node.try_lock().unwrap()
     }
     fn get_next_node_ref(
         &self,
