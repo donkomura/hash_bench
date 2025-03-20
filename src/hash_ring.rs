@@ -99,18 +99,11 @@ impl<
 
         let head_value = self.get_head_value();
         let head_next_value = self.get_next_value(&self.head.clone());
-        let prev_node_ref = self.get_prev_node_ref(&node_ref);
-        let next_node_ref = self.get_next_node_ref(&node_ref);
-        if let Some(prev_node) = &prev_node_ref {
-            let mut prev = prev_node.try_lock().unwrap();
-            prev.next = next_node_ref.clone();
-        }
-        if let Some(next_node) = &next_node_ref {
-            let mut next = next_node.try_lock().unwrap();
-            next.prev = prev_node_ref.clone();
+        if let Some(node) = &node_ref {
+            self.remove_node_inner(node.clone());
         }
         if head_value == head_next_value {
-            self.head = next_node_ref.clone();
+            self.head = self.get_next_node_ref(&node_ref);
             if head_value == hash {
                 self.head = None;
             }
@@ -151,8 +144,14 @@ impl<
         let mut resources: Vec<(T, T)> = Vec::new();
         let dest_node = self.lookup(dest);
         let src_node = self.lookup(src);
-        if dest_node.is_none() || src_node.is_none() {
-            panic!("dest {} or src {} is not found", dest, src);
+        let dest_value = self.get_node_value(&dest_node);
+
+        let src_value = self.get_node_value(&src_node);
+        if src != src_value {
+            panic!("src {} is not found", src);
+        }
+        if dest != dest_value {
+            panic!("dest {} is not found", dest);
         }
 
         if let Some(src_node_ref) = src_node {
@@ -231,17 +230,17 @@ impl<
                 .prev
                 .clone()
                 .expect("Node is found, but it is an invalid node: prev does not set");
-        node.prev = Some(Arc::clone(new_node));
+            node.prev = Some(Arc::clone(new_node));
             prev
         };
         {
-        let mut new_node_mut = new_node.try_lock().unwrap();
+            let mut new_node_mut = new_node.try_lock().unwrap();
             new_node_mut.prev = Some(Arc::clone(&prev_node_ref));
-        new_node_mut.next = Some(Arc::clone(target));
+            new_node_mut.next = Some(Arc::clone(target));
         }
         {
-        let mut prev_node = prev_node_ref.try_lock().unwrap();
-        prev_node.next = Some(Arc::clone(new_node));
+            let mut prev_node = prev_node_ref.try_lock().unwrap();
+            prev_node.next = Some(Arc::clone(new_node));
         }
     }
     fn get_head_value(&self) -> T {
@@ -279,6 +278,37 @@ impl<
             return node.prev.clone();
         }
         None
+    }
+    fn remove_node_inner(&self, node: Arc<Mutex<Node<T>>>) {
+        let node_ref = Some(node);
+        let prev_node_ref = self.get_prev_node_ref(&node_ref);
+        let next_node_ref = self.get_next_node_ref(&node_ref);
+        if let Some(prev_node) = &prev_node_ref {
+            let mut prev = prev_node.try_lock().unwrap();
+            prev.next = next_node_ref.clone();
+        }
+        if let Some(next_node) = &next_node_ref {
+            let mut next = next_node.try_lock().unwrap();
+            next.prev = prev_node_ref.clone();
+        }
+        if let Some(node) = &node_ref {
+            let mut node = node.try_lock().unwrap();
+            node.prev = None;
+            node.next = None;
+        }
+    }
+    pub fn remove_all(&mut self) {
+        let mut head = self.head.clone();
+        let head_value = self.get_head_value();
+        while let Some(node_ref) = head.clone() {
+            let node = node_ref.try_lock().unwrap();
+            if *node.value() == head_value {
+                break;
+            }
+            self.remove_node(*node.value());
+            head = node.next.clone();
+        }
+        self.head = None;
     }
     pub fn print(&self) {
         let nodes = self.nodes();
@@ -400,6 +430,7 @@ mod test {
         let mut h = HashRing::new(5);
         h.add_node(3);
         let _node_ref = h.lookup(3);
+        remove_all();
     }
 
     #[test]
@@ -423,6 +454,7 @@ mod test {
         let want = vec![5, 12, 18, 29];
         let got = h.nodes();
         assert_eq!(want, got);
+        remove_all();
     }
 
     #[test]
@@ -458,6 +490,7 @@ mod test {
                 (29, 29)
             ])
         );
+        remove_all();
     }
 
     #[test]
@@ -496,6 +529,7 @@ mod test {
                 (29, 29)
             ])
         );
+        remove_all();
     }
 
     #[test]
@@ -553,5 +587,21 @@ mod test {
             Some(&vec![(21, 21), (23, 23), (24, 24)])
         );
         assert_eq!(h.resources().get(&30), Some(&vec![(28, 28), (29, 29)]));
+        remove_all();
+    }
+
+    #[test]
+    fn remove_all() {
+        log::init_test_logger();
+        let mut h = HashRing::new(5);
+        h.add_node(12);
+        h.add_node(18);
+        h.add_node(5);
+        h.add_node(27);
+        h.add_node(30);
+        h.print();
+        h.remove_all();
+        h.print();
+        assert_eq!(h.nodes().len(), 0);
     }
 }
