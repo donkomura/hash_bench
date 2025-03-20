@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::Rng;
 
 use hash_bench::hash_ring::{HashRing, HashRingInterface};

@@ -11,4 +11,6 @@ fn main() {
     h.add_node(10);
     h.add_node(11);
     h.print();
+
+    h.remove_all();
 }
