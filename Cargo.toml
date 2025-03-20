@@ -12,3 +12,7 @@ num-traits = "0.2.19"
 [[bench]]
 name = "bloom_filter"
 harness = false
+
+[[bench]]
+name = "hash_ring"
+harness = false
