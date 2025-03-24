@@ -47,31 +47,36 @@ impl<N: Node, H: Hasher> HashRing<N, H> {
             return None;
         }
 
-        let key = _get_key::<H>(&mut self.hasher, id.clone());
+        let key = _get_key::<H>(&mut self.hasher, &id);
         let node = self.nodes.range(key..).next();
         if let Some((_key, _value)) = node {
+            debug!("Node found: [{}] {:?}", key, node);
             return Some(_value);
         }
 
+        // if we reach here, we wrap around the ring
         let first = self.nodes.iter().next();
-        let (_key, _value) = first.unwrap();
-        Some(_value)
+        if let Some((_key, _value)) = first {
+            debug!("Node found: [{}] {:?}", key, first);
+            return Some(_value);
+        }
+        None
     }
 
     fn add_node(&mut self, node: N) {
         let name = node.name();
-        let id = _get_key::<H>(&mut self.hasher, name);
-        self.nodes.insert(id, node.clone());
+        let id = _get_key::<H>(&mut self.hasher, &name);
         debug!(
             "Node added: [{}] len = {} | {:?}",
             id,
             self.nodes.len(),
             node
         );
+        self.nodes.insert(id, node);
     }
     fn remove_node(&mut self, node: N) {
         let name = node.name();
-        let id = _get_key::<H>(&mut self.hasher, name);
+        let id = _get_key::<H>(&mut self.hasher, &name);
         let _node = self.nodes.remove(&id);
         debug!(
             "Node removed: [{}] len = {} | {:?}",
@@ -83,7 +88,7 @@ impl<N: Node, H: Hasher> HashRing<N, H> {
 }
 
 // an internal function for looking up the key of the node
-fn _get_key<H: Hasher>(hasher: &mut H, data: HashBytes) -> Key {
+fn _get_key<H: Hasher>(hasher: &mut H, data: &HashBytes) -> Key {
     hasher.write(&data);
     hasher.finish()
 }
@@ -107,31 +112,34 @@ mod tests {
         }
     }
 
+    static F: fn(&String) -> HashBytes = |x: &String| -> HashBytes { x.as_bytes().to_vec() };
     impl Node for TestNode {
         fn name(&self) -> HashBytes {
-            self.name.as_bytes().to_vec()
+            F(&self.name)
         }
     }
 
     #[test]
-    fn check_hasher() {
+    fn check_hash() {
         init_test_logger();
-        let mut hasher = DefaultHasher::new();
-        let data = "hello".as_bytes();
-        assert_eq!(
-            16350172494705860510u64,
-            _get_key(&mut hasher, data.to_vec()),
-        )
+
+        let node = TestNode::new("hoge");
+        assert_eq!(node.name(), F(&"hoge".to_string()));
     }
 
     #[test]
     fn add_and_remove_nodes() {
         init_test_logger();
+
         let mut ring = HashRing::new();
-        let node1 = TestNode::new("node1");
-        let node2 = TestNode::new("node2");
-        let node3 = TestNode::new("node3");
-        let node4 = TestNode::new("node4");
-        let node5 = TestNode::new("node5");
+        let hoge = TestNode::new("hoge");
+        let fuga = TestNode::new("fuga");
+        let piyo = TestNode::new("piyo");
+
+        ring.add_nodes(vec![hoge, fuga]);
+        assert_eq!(2, ring.nodes.len());
+        let found = ring.lookup(&F(&"hoge".to_string()));
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().name(), F(&"hoge".to_string()));
     }
 }
