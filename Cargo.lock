@@ -299,6 +299,7 @@ dependencies = [
  "criterion",
  "env_logger",
  "log",
+ "md5hash",
  "murmurhash3",
  "num-traits",
  "rand",
@@ -387,6 +388,12 @@ name = "log"
 version = "0.4.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
+
+[[package]]
+name = "md5hash"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4eaa8fe5a27d5df6412c7552c2f20f11094a88e09358be486864ff8d59c7d898"
 
 [[package]]
 name = "memchr"
