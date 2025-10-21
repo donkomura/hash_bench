@@ -105,7 +105,7 @@ impl QuotientFilter {
         // set the new remainder at the insertion position
         self.filter[s].remainder = remainder;
         self.filter[s].is_shifted = s != q_idx;
-        self.filter[s].is_continued = !is_run_start;
+        self.filter[s].is_continued = already_occupied && !is_run_start;
 
         // if inserting at the start of the run, set is_continued=true for the next slot (shifted original run start)
         if is_run_start {
