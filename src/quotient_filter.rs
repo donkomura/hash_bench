@@ -67,16 +67,13 @@ impl QuotientFilter {
             }
         }
 
-        // remember the start position of the run
         let run_start = s;
-
-        // find the insertion point within the run
-        // Check the first element (continued=false)
         if !self.filter[s].is_empty() && self.filter[s].remainder < remainder {
-            s = (s + 1) % self.size;
-            // Then check continued elements
-            while self.filter[s].is_continued && self.filter[s].remainder < remainder {
+            loop {
                 s = (s + 1) % self.size;
+                if !(self.filter[s].is_continued && self.filter[s].remainder < remainder) {
+                    break;
+                }
             }
         }
 
