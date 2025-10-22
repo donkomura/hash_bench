@@ -70,9 +70,14 @@ impl QuotientFilter {
         // remember the start position of the run
         let run_start = s;
 
-        // find the insertion point
-        while !self.filter[s].is_empty() && self.filter[s].remainder < remainder {
+        // find the insertion point within the run
+        // Check the first element (continued=false)
+        if !self.filter[s].is_empty() && self.filter[s].remainder < remainder {
             s = (s + 1) % self.size;
+            // Then check continued elements
+            while self.filter[s].is_continued && self.filter[s].remainder < remainder {
+                s = (s + 1) % self.size;
+            }
         }
 
         // determine if we're inserting at the start of the run
@@ -114,6 +119,46 @@ impl QuotientFilter {
         }
 
         self.entries += 1;
+    }
+
+    pub fn lookup(&self, key: u64) -> bool {
+        let (quotient, remainder) = self.split(key);
+        let q_idx = quotient as usize;
+        if !self.filter[q_idx].is_occupied {
+            return false;
+        }
+
+        let mut b = q_idx;
+        while self.filter[b].is_shifted {
+            b = (b + self.size - 1) % self.size;
+        }
+
+        let mut s = b;
+        while b != q_idx {
+            s = (s + 1) % self.size;
+            while self.filter[s].is_continued {
+                s = (s + 1) % self.size;
+            }
+            b = (b + 1) % self.size;
+            while !self.filter[b].is_occupied {
+                b = (b + 1) % self.size;
+            }
+        }
+        if self.filter[s].remainder == remainder {
+            return true;
+        }
+
+        // Check continued elements in the run
+        s = (s + 1) % self.size;
+        while self.filter[s].is_continued {
+            if self.filter[s].remainder == remainder {
+                return true;
+            }
+            s = (s + 1) % self.size;
+        }
+
+        // Reached end of run (next run start or empty slot)
+        false
     }
 
     fn split(&self, key: u64) -> (u64, u64) {
@@ -233,14 +278,17 @@ mod test {
 
         // quotient=0b0010 slot
         assert!(qf.filter[2].is_occupied);
-        assert_eq!(qf.filter[2].remainder, 0b0010);
-        assert!(!qf.filter[2].is_shifted);
-        assert!(!qf.filter[2].is_continued);
 
-        // second remainder for quotient=0b0001 (shifted)
-        assert_eq!(qf.filter[3].remainder, 0b0011);
+        // With the corrected insert, quotient=1's run should be contiguous
+        // so filter[2] should contain the second element of quotient=1's run
+        assert_eq!(qf.filter[2].remainder, 0b0011);
+        assert!(qf.filter[2].is_shifted);
+        assert!(qf.filter[2].is_continued);
+
+        // quotient=0b0010's element is shifted to filter[3]
+        assert_eq!(qf.filter[3].remainder, 0b0010);
         assert!(qf.filter[3].is_shifted);
-        assert!(qf.filter[3].is_continued);
+        assert!(!qf.filter[3].is_continued);
     }
 
     #[test]
@@ -372,5 +420,294 @@ mod test {
             qf.filter[2].remainder, 0b0001,
             "index=2 should not store q=2's first element"
         );
+    }
+
+    #[test]
+    fn test_lookup_empty_filter() {
+        let qf = QuotientFilter::new(4, 4);
+        let key = 0b00010001;
+        assert!(!qf.lookup(key));
+    }
+
+    #[test]
+    fn test_lookup_simple_hit() {
+        let mut qf = QuotientFilter::new(4, 4);
+        let key = 0b00010001;
+        let (quotient, remainder) = qf.split(key);
+        let idx = quotient as usize;
+
+        qf.filter[idx].remainder = remainder;
+        qf.filter[idx].is_occupied = true;
+        qf.filter[idx].is_continued = false;
+        qf.filter[idx].is_shifted = false;
+        qf.entries = 1;
+
+        assert!(qf.lookup(key));
+    }
+
+    #[test]
+    fn test_lookup_with_run() {
+        let mut qf = QuotientFilter::new(4, 4);
+        let quotient = 0b0001;
+        let idx = quotient as usize;
+
+        qf.filter[idx].remainder = 0b0001;
+        qf.filter[idx].is_occupied = true;
+        qf.filter[idx].is_continued = false;
+        qf.filter[idx].is_shifted = false;
+
+        qf.filter[idx + 1].remainder = 0b0010;
+        qf.filter[idx + 1].is_occupied = false;
+        qf.filter[idx + 1].is_continued = true;
+        qf.filter[idx + 1].is_shifted = true;
+
+        qf.filter[idx + 2].remainder = 0b0011;
+        qf.filter[idx + 2].is_occupied = false;
+        qf.filter[idx + 2].is_continued = true;
+        qf.filter[idx + 2].is_shifted = true;
+
+        qf.entries = 3;
+
+        let key1 = (quotient << qf.r) | 0b0001;
+        let key2 = (quotient << qf.r) | 0b0010;
+        let key3 = (quotient << qf.r) | 0b0011;
+        let key4 = (quotient << qf.r) | 0b0100; // not in the filter
+
+        assert!(qf.lookup(key1));
+        assert!(qf.lookup(key2));
+        assert!(qf.lookup(key3));
+        assert!(!qf.lookup(key4));
+    }
+
+    #[test]
+    fn test_lookup_multiple_different_quotients() {
+        let mut qf = QuotientFilter::new(4, 4);
+
+        qf.filter[1].remainder = 0b0001;
+        qf.filter[1].is_occupied = true;
+        qf.filter[1].is_continued = false;
+        qf.filter[1].is_shifted = false;
+
+        qf.filter[3].remainder = 0b0010;
+        qf.filter[3].is_occupied = true;
+        qf.filter[3].is_continued = false;
+        qf.filter[3].is_shifted = false;
+
+        qf.filter[5].remainder = 0b0011;
+        qf.filter[5].is_occupied = true;
+        qf.filter[5].is_continued = false;
+        qf.filter[5].is_shifted = false;
+
+        qf.filter[7].remainder = 0b0100;
+        qf.filter[7].is_occupied = true;
+        qf.filter[7].is_continued = false;
+        qf.filter[7].is_shifted = false;
+
+        qf.entries = 4;
+
+        // Test that each different quotient can be found
+        let key1 = (0b0001 << qf.r) | 0b0001;
+        let key2 = (0b0011 << qf.r) | 0b0010;
+        let key3 = (0b0101 << qf.r) | 0b0011;
+        let key4 = (0b0111 << qf.r) | 0b0100;
+
+        assert!(qf.lookup(key1), "quotient=1 should be found");
+        assert!(qf.lookup(key2), "quotient=3 should be found");
+        assert!(qf.lookup(key3), "quotient=5 should be found");
+        assert!(qf.lookup(key4), "quotient=7 should be found");
+
+        // Test that non-existent quotients return false
+        let key_missing1 = (0b0010 << qf.r) | 0b0001;
+        let key_missing2 = (0b0100 << qf.r) | 0b0010;
+        let key_missing3 = (0b0110 << qf.r) | 0b0011;
+
+        assert!(!qf.lookup(key_missing1), "quotient=2 should not be found");
+        assert!(!qf.lookup(key_missing2), "quotient=4 should not be found");
+        assert!(!qf.lookup(key_missing3), "quotient=6 should not be found");
+
+        // Test that same quotient with different remainder returns false
+        let key_wrong_remainder1 = (0b0001 << qf.r) | 0b0010;
+        let key_wrong_remainder2 = (0b0011 << qf.r) | 0b0001;
+
+        assert!(
+            !qf.lookup(key_wrong_remainder1),
+            "quotient=1 with wrong remainder should not be found"
+        );
+        assert!(
+            !qf.lookup(key_wrong_remainder2),
+            "quotient=3 with wrong remainder should not be found"
+        );
+    }
+
+    #[test]
+    fn test_lookup_with_insert_single() {
+        let mut qf = QuotientFilter::new(4, 4);
+        let key = 0b00010001;
+
+        qf.insert(key);
+        assert!(qf.lookup(key), "inserted key should be found");
+
+        let non_existent = 0b00010010;
+        assert!(
+            !qf.lookup(non_existent),
+            "non-existent key should not be found"
+        );
+    }
+
+    #[test]
+    fn test_lookup_with_insert_multiple_same_quotient() {
+        let mut qf = QuotientFilter::new(4, 4);
+
+        let key1 = 0b00010001;
+        let key2 = 0b00010010;
+        let key3 = 0b00010011;
+
+        qf.insert(key1);
+        qf.insert(key2);
+        qf.insert(key3);
+
+        assert!(qf.lookup(key1), "key1 should be found");
+        assert!(qf.lookup(key2), "key2 should be found");
+        assert!(qf.lookup(key3), "key3 should be found");
+
+        let non_existent = 0b00010100;
+        assert!(
+            !qf.lookup(non_existent),
+            "non-existent key should not be found"
+        );
+    }
+
+    #[test]
+    fn test_lookup_with_insert_multiple_different_quotients() {
+        let mut qf = QuotientFilter::new(4, 4);
+
+        let key1 = 0b00010001;
+        let key2 = 0b00100010;
+        let key3 = 0b00110011;
+        let key4 = 0b01000100;
+
+        qf.insert(key1);
+        qf.insert(key2);
+        qf.insert(key3);
+        qf.insert(key4);
+
+        assert!(qf.lookup(key1), "key1 should be found");
+        assert!(qf.lookup(key2), "key2 should be found");
+        assert!(qf.lookup(key3), "key3 should be found");
+        assert!(qf.lookup(key4), "key4 should be found");
+
+        let non_existent1 = 0b01010001;
+        let non_existent2 = 0b01100010;
+        assert!(
+            !qf.lookup(non_existent1),
+            "non-existent key1 should not be found"
+        );
+        assert!(
+            !qf.lookup(non_existent2),
+            "non-existent key2 should not be found"
+        );
+    }
+
+    #[test]
+    fn test_lookup_with_insert_duplicates() {
+        let mut qf = QuotientFilter::new(4, 4);
+        let key = 0b00010001;
+
+        qf.insert(key);
+        qf.insert(key);
+        qf.insert(key);
+
+        assert!(qf.lookup(key), "duplicate key should be found");
+        assert_eq!(qf.entries, 3, "should have 3 entries for duplicates");
+    }
+
+    #[test]
+    fn test_lookup_with_insert_collision_scenario() {
+        let mut qf = QuotientFilter::new(4, 4);
+
+        let key1 = 0b00010001;
+        let key2 = 0b00100010;
+        let key3 = 0b00010011;
+
+        qf.insert(key1);
+        qf.insert(key2);
+        qf.insert(key3);
+
+        assert!(qf.lookup(key1), "key1 should be found after collisions");
+        assert!(qf.lookup(key2), "key2 should be found after collisions");
+        assert!(qf.lookup(key3), "key3 should be found after collisions");
+
+        let non_existent1 = 0b00010010;
+        let non_existent2 = 0b00100001;
+        assert!(
+            !qf.lookup(non_existent1),
+            "non-existent key1 should not be found"
+        );
+        assert!(
+            !qf.lookup(non_existent2),
+            "non-existent key2 should not be found"
+        );
+    }
+
+    #[test]
+    fn test_lookup_with_insert_wraparound_scenario() {
+        let mut qf = QuotientFilter::new(4, 4);
+
+        let key1 = 0b11110001;
+        let key2 = 0b11110010;
+        let key3 = 0b11110011;
+
+        qf.insert(key1);
+        qf.insert(key2);
+        qf.insert(key3);
+
+        assert!(qf.lookup(key1), "key1 should be found with wraparound");
+        assert!(qf.lookup(key2), "key2 should be found with wraparound");
+        assert!(qf.lookup(key3), "key3 should be found with wraparound");
+
+        let non_existent = 0b11110100;
+        assert!(
+            !qf.lookup(non_existent),
+            "non-existent key should not be found"
+        );
+    }
+
+    #[test]
+    fn test_lookup_with_insert_complex_pattern() {
+        let mut qf = QuotientFilter::new(4, 4);
+
+        let keys = vec![
+            0b0001_0001,
+            0b0001_0010,
+            0b0010_0011,
+            0b0010_0001,
+            0b0011_0010,
+            0b0001_0011,
+            0b0100_0001,
+        ];
+
+        for &key in &keys {
+            qf.insert(key);
+        }
+
+        for &key in &keys {
+            assert!(qf.lookup(key), "inserted key {:08b} should be found", key);
+        }
+
+        let non_existent_keys = vec![
+            0b0001_0100,
+            0b0010_0010,
+            0b0011_0001,
+            0b0100_0010,
+            0b0101_0001,
+        ];
+
+        for &key in &non_existent_keys {
+            assert!(
+                !qf.lookup(key),
+                "non-existent key {:08b} should not be found",
+                key
+            );
+        }
     }
 }
