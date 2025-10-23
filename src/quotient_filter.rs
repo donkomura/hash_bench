@@ -99,7 +99,9 @@ impl QuotientFilter {
         let mut curr = empty_pos;
         while curr != s {
             let prev = (curr + self.size - 1) % self.size;
-            self.filter[curr] = self.filter[prev].clone();
+            let prev_slot = self.filter[prev].clone();
+            self.filter[curr].remainder = prev_slot.remainder;
+            self.filter[curr].is_continued = prev_slot.is_continued;
             self.filter[curr].is_shifted = true;
             curr = prev;
         }
@@ -251,6 +253,24 @@ mod test {
         assert!(!qf.filter[idx].is_continued);
         assert!(qf.filter[idx + 1].is_continued);
         assert!(qf.filter[idx + 2].is_continued);
+    }
+
+    #[test]
+    fn test_insert_preserves_occupied_bitmap() {
+        let mut qf = QuotientFilter::new(4, 4);
+
+        // Insert larger remainder first so the later insert shifts the run head.
+        qf.insert(0b0001_0010);
+        qf.insert(0b0001_0001);
+
+        assert!(
+            qf.filter[1].is_occupied,
+            "home bucket for quotient=1 must remain occupied"
+        );
+        assert!(
+            !qf.filter[2].is_occupied,
+            "inserting only quotient=1 elements must not mark quotient=2 as occupied"
+        );
     }
 
     #[test]
