@@ -32,6 +32,51 @@ impl QuotientFilter {
         }
     }
 
+    fn prev_index(&self, idx: usize) -> usize {
+        (idx + self.size - 1) % self.size
+    }
+
+    fn next_index(&self, idx: usize) -> usize {
+        (idx + 1) % self.size
+    }
+
+    fn find_run_head(&self, home_idx: usize) -> usize {
+        let mut bucket = home_idx;
+        while self.filter[bucket].is_shifted {
+            bucket = self.prev_index(bucket);
+        }
+
+        let mut run_head = bucket;
+        let mut probe = bucket;
+        while probe != home_idx {
+            run_head = self.next_index(run_head);
+            while self.filter[run_head].is_continued {
+                run_head = self.next_index(run_head);
+            }
+            probe = self.next_index(probe);
+            while !self.filter[probe].is_occupied {
+                probe = self.next_index(probe);
+            }
+        }
+        run_head
+    }
+
+    /// Run内の全ての要素に対してクロージャを実行する
+    ///
+    /// * `run_head`: runの先頭スロットのインデックス
+    /// * `f`: 各スロットインデックスに対して実行されるクロージャ
+    fn visit_run<F>(&self, run_head: usize, mut f: F)
+    where
+        F: FnMut(usize),
+    {
+        f(run_head);
+        let mut idx = self.next_index(run_head);
+        while self.filter[idx].is_continued {
+            f(idx);
+            idx = self.next_index(idx);
+        }
+    }
+
     fn collect_keys(&self) -> Vec<u64> {
         let mut keys = Vec::with_capacity(self.entries);
         if self.entries == 0 {
@@ -44,33 +89,11 @@ impl QuotientFilter {
                 continue;
             }
 
-            let mut b = quotient_idx;
-            while self.filter[b].is_shifted {
-                b = (b + size - 1) % size;
-            }
-
-            let mut s = b;
-            while b != quotient_idx {
-                s = (s + 1) % size;
-                while self.filter[s].is_continued {
-                    s = (s + 1) % size;
-                }
-                b = (b + 1) % size;
-                while !self.filter[b].is_occupied {
-                    b = (b + 1) % size;
-                }
-            }
-
-            let mut run_pos = s;
-            loop {
-                let key = ((quotient_idx as u64) << self.r) | self.filter[run_pos].remainder;
+            let run_head = self.find_run_head(quotient_idx);
+            self.visit_run(run_head, |slot_idx| {
+                let key = ((quotient_idx as u64) << self.r) | self.filter[slot_idx].remainder;
                 keys.push(key);
-
-                run_pos = (run_pos + 1) % size;
-                if !self.filter[run_pos].is_continued {
-                    break;
-                }
-            }
+            });
         }
 
         keys
@@ -136,58 +159,39 @@ impl QuotientFilter {
         let already_occupied = self.filter[q_idx].is_occupied;
         self.filter[q_idx].is_occupied = true;
 
-        let mut b = q_idx;
-        // find the start of the cluster
-        while self.filter[b].is_shifted {
-            b = (b + self.size - 1) % self.size;
-        }
-        let mut s = b;
-        // find the same quotient run
-        while b != q_idx {
-            s = (s + 1) % self.size;
-            // track the run for this quotient
-            while self.filter[s].is_continued {
-                s = (s + 1) % self.size;
-            }
-            b = (b + 1) % self.size;
-            // skip empty slots
-            while !self.filter[b].is_occupied {
-                b = (b + 1) % self.size;
-            }
-        }
-
-        let run_start = s;
-        if !self.filter[s].is_empty() && self.filter[s].remainder < remainder {
+        let run_head = self.find_run_head(q_idx);
+        let mut insert_pos = run_head;
+        if !self.filter[insert_pos].is_empty() && self.filter[insert_pos].remainder < remainder {
             loop {
-                s = (s + 1) % self.size;
-                if !(self.filter[s].is_continued && self.filter[s].remainder < remainder) {
+                insert_pos = self.next_index(insert_pos);
+                if !(self.filter[insert_pos].is_continued
+                    && self.filter[insert_pos].remainder < remainder)
+                {
                     break;
                 }
             }
         }
 
-        // determine if we're inserting at the start of the run
-        let is_run_start = s == run_start;
+        let inserting_at_head = insert_pos == run_head;
 
-        if self.filter[s].is_empty() {
-            self.filter[s].remainder = remainder;
-            self.filter[s].is_shifted = s != q_idx;
-            self.filter[s].is_continued = already_occupied && !is_run_start;
+        if self.filter[insert_pos].is_empty() {
+            self.filter[insert_pos].remainder = remainder;
+            self.filter[insert_pos].is_shifted = insert_pos != q_idx;
+            self.filter[insert_pos].is_continued = already_occupied && !inserting_at_head;
             self.entries += 1;
             return;
         }
 
         // shift entries to make space
-        // first, find an empty slot
-        let mut empty_pos = s;
+        let mut empty_pos = insert_pos;
         while !self.filter[empty_pos].is_empty() {
-            empty_pos = (empty_pos + 1) % self.size;
+            empty_pos = self.next_index(empty_pos);
         }
 
         // shift entries backward from the empty slot
         let mut curr = empty_pos;
-        while curr != s {
-            let prev = (curr + self.size - 1) % self.size;
+        while curr != insert_pos {
+            let prev = self.prev_index(curr);
             let prev_slot = self.filter[prev].clone();
             self.filter[curr].remainder = prev_slot.remainder;
             self.filter[curr].is_continued = prev_slot.is_continued;
@@ -196,13 +200,13 @@ impl QuotientFilter {
         }
 
         // set the new remainder at the insertion position
-        self.filter[s].remainder = remainder;
-        self.filter[s].is_shifted = s != q_idx;
-        self.filter[s].is_continued = already_occupied && !is_run_start;
+        self.filter[insert_pos].remainder = remainder;
+        self.filter[insert_pos].is_shifted = insert_pos != q_idx;
+        self.filter[insert_pos].is_continued = already_occupied && !inserting_at_head;
 
         // if inserting at the start of the run, set is_continued=true for the next slot (shifted original run start)
-        if is_run_start {
-            let next = (s + 1) % self.size;
+        if inserting_at_head {
+            let next = self.next_index(insert_pos);
             self.filter[next].is_continued = true;
         }
 
@@ -216,33 +220,17 @@ impl QuotientFilter {
             return false;
         }
 
-        let mut b = q_idx;
-        while self.filter[b].is_shifted {
-            b = (b + self.size - 1) % self.size;
-        }
-
-        let mut s = b;
-        while b != q_idx {
-            s = (s + 1) % self.size;
-            while self.filter[s].is_continued {
-                s = (s + 1) % self.size;
-            }
-            b = (b + 1) % self.size;
-            while !self.filter[b].is_occupied {
-                b = (b + 1) % self.size;
-            }
-        }
-        if self.filter[s].remainder == remainder {
+        let run_head = self.find_run_head(q_idx);
+        if self.filter[run_head].remainder == remainder {
             return true;
         }
 
-        // Check continued elements in the run
-        s = (s + 1) % self.size;
-        while self.filter[s].is_continued {
-            if self.filter[s].remainder == remainder {
+        let mut idx = self.next_index(run_head);
+        while self.filter[idx].is_continued {
+            if self.filter[idx].remainder == remainder {
                 return true;
             }
-            s = (s + 1) % self.size;
+            idx = self.next_index(idx);
         }
 
         // Reached end of run (next run start or empty slot)
