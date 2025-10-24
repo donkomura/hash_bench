@@ -40,7 +40,7 @@ impl QuotientFilter {
         (idx + 1) % self.size
     }
 
-    fn locate_run_head(&self, home_idx: usize) -> usize {
+    fn find_run_head(&self, home_idx: usize) -> usize {
         let mut bucket = home_idx;
         while self.filter[bucket].is_shifted {
             bucket = self.prev_index(bucket);
@@ -61,6 +61,18 @@ impl QuotientFilter {
         run_head
     }
 
+    /// Run内の全ての要素に対してクロージャを実行する
+    ///
+    /// # 責務
+    /// 指定されたrun headから始まるrun（同じquotientを持つ要素の連続）内の
+    /// 全てのスロットインデックスに対して、渡されたクロージャを順番に実行します。
+    ///
+    /// # Parameters
+    /// - `run_head`: runの先頭スロットのインデックス。`find_run_head`メソッドで取得した値を指定します。
+    ///   このインデックスから始まり、`is_continued`フラグがtrueの間、連続するスロットを走査します。
+    /// - `f`: 各スロットインデックスに対して実行されるクロージャ。run内の各スロットのインデックス（usize）が
+    ///   引数として渡されます。このクロージャ内でスロットの`remainder`フィールドにアクセスしてキーの再構築や
+    ///   検索などの操作を行います。
     fn visit_run<F>(&self, run_head: usize, mut f: F)
     where
         F: FnMut(usize),
@@ -85,7 +97,7 @@ impl QuotientFilter {
                 continue;
             }
 
-            let run_head = self.locate_run_head(quotient_idx);
+            let run_head = self.find_run_head(quotient_idx);
             self.visit_run(run_head, |slot_idx| {
                 let key = ((quotient_idx as u64) << self.r) | self.filter[slot_idx].remainder;
                 keys.push(key);
@@ -155,7 +167,7 @@ impl QuotientFilter {
         let already_occupied = self.filter[q_idx].is_occupied;
         self.filter[q_idx].is_occupied = true;
 
-        let run_head = self.locate_run_head(q_idx);
+        let run_head = self.find_run_head(q_idx);
         let mut insert_pos = run_head;
         if !self.filter[insert_pos].is_empty() && self.filter[insert_pos].remainder < remainder {
             loop {
@@ -216,7 +228,7 @@ impl QuotientFilter {
             return false;
         }
 
-        let run_head = self.locate_run_head(q_idx);
+        let run_head = self.find_run_head(q_idx);
         if self.filter[run_head].remainder == remainder {
             return true;
         }
