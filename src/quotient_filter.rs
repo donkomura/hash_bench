@@ -249,60 +249,6 @@ impl QuotientFilter {
         false
     }
 
-    pub fn resize(&mut self) {
-        let existing_keys = self.collect_keys();
-        let new_q = self.q + 1;
-        let new_size = self.size * 2;
-
-        self.q = new_q;
-        self.size = new_size;
-        self.filter = vec![Slot::default(); new_size];
-        self.entries = 0;
-
-        for key in existing_keys {
-            self.insert(key);
-        }
-    }
-
-    fn collect_keys(&self) -> Vec<u64> {
-        let mut keys = Vec::with_capacity(self.entries);
-
-        for q_idx in 0..self.size {
-            if !self.filter[q_idx].is_occupied {
-                continue;
-            }
-
-            // locate the start of the run for this quotient
-            let mut b = q_idx;
-            while self.filter[b].is_shifted {
-                b = (b + self.size - 1) % self.size;
-            }
-
-            let mut s = b;
-            while b != q_idx {
-                s = (s + 1) % self.size;
-                while self.filter[s].is_continued {
-                    s = (s + 1) % self.size;
-                }
-                b = (b + 1) % self.size;
-                while !self.filter[b].is_occupied {
-                    b = (b + 1) % self.size;
-                }
-            }
-
-            let mut idx = s;
-            keys.push(((q_idx as u64) << self.r) | self.filter[idx].remainder);
-            idx = (idx + 1) % self.size;
-
-            while self.filter[idx].is_continued {
-                keys.push(((q_idx as u64) << self.r) | self.filter[idx].remainder);
-                idx = (idx + 1) % self.size;
-            }
-        }
-
-        keys
-    }
-
     fn split(&self, key: u64) -> (u64, u64) {
         let quotient = (key >> self.r) & ((1 << self.q) - 1);
         let remainder = key & ((1 << self.r) - 1);
