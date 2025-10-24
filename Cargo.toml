@@ -19,3 +19,7 @@ harness = false
 [[bench]]
 name = "hash_ring"
 harness = false
+
+[[bench]]
+name = "quotient_filter"
+harness = false
