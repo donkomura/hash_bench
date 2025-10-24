@@ -32,7 +32,96 @@ impl QuotientFilter {
         }
     }
 
+    fn collect_keys(&self) -> Vec<u64> {
+        let mut keys = Vec::with_capacity(self.entries);
+        if self.entries == 0 {
+            return keys;
+        }
+
+        let size = self.size;
+        for quotient_idx in 0..size {
+            if !self.filter[quotient_idx].is_occupied {
+                continue;
+            }
+
+            let mut b = quotient_idx;
+            while self.filter[b].is_shifted {
+                b = (b + size - 1) % size;
+            }
+
+            let mut s = b;
+            while b != quotient_idx {
+                s = (s + 1) % size;
+                while self.filter[s].is_continued {
+                    s = (s + 1) % size;
+                }
+                b = (b + 1) % size;
+                while !self.filter[b].is_occupied {
+                    b = (b + 1) % size;
+                }
+            }
+
+            let mut run_pos = s;
+            loop {
+                let key = ((quotient_idx as u64) << self.r) | self.filter[run_pos].remainder;
+                keys.push(key);
+
+                run_pos = (run_pos + 1) % size;
+                if !self.filter[run_pos].is_continued {
+                    break;
+                }
+            }
+        }
+
+        keys
+    }
+
+    pub fn resize(&mut self) {
+        let new_q = self.q + 1;
+
+        let keys = self.collect_keys();
+        let mut new_qf = QuotientFilter::new(new_q, self.r);
+        for key in keys {
+            new_qf.insert(key);
+        }
+
+        *self = new_qf;
+    }
+
+    pub fn merge(&self, other: &Self) -> Self {
+        assert_eq!(
+            self.r, other.r,
+            "cannot merge filters with different remainder sizes"
+        );
+
+        let keys_self = self.collect_keys();
+        let keys_other = other.collect_keys();
+        let total_entries = keys_self.len() + keys_other.len();
+
+        let mut target_q = self.q.max(other.q);
+        let mut capacity = (1usize)
+            .checked_shl(target_q as u32)
+            .expect("q too large for usize");
+        while capacity < total_entries {
+            target_q += 1;
+            capacity = (1usize)
+                .checked_shl(target_q as u32)
+                .expect("q too large for usize");
+        }
+
+        let mut merged = QuotientFilter::new(target_q, self.r);
+        for key in keys_self.into_iter().chain(keys_other.into_iter()) {
+            merged.insert(key);
+        }
+
+        merged
+    }
+
     pub fn insert(&mut self, key: u64) {
+        if self.entries == self.size {
+            self.resize();
+        }
+
         let (quotient, remainder) = self.split(key);
         let q_idx = quotient as usize;
 
@@ -324,6 +413,120 @@ mod test {
         assert!(
             !qf.filter[2].is_occupied,
             "inserting only quotient=1 elements must not mark quotient=2 as occupied"
+        );
+    }
+
+    #[test]
+    fn test_resize_expands_capacity() {
+        let mut qf = QuotientFilter::new(3, 4); // size = 8
+
+        let initial_keys: Vec<u64> = (0..8).map(|q| (q << qf.r) | 0b0001).collect();
+        for key in &initial_keys {
+            qf.insert(*key);
+        }
+        assert_eq!(qf.entries, 8);
+        assert_eq!(qf.size, 8);
+
+        qf.resize();
+
+        assert_eq!(qf.size, 16);
+        assert_eq!(qf.q, 4);
+        for key in &initial_keys {
+            assert!(qf.lookup(*key), "key {:x} should survive resize", key);
+        }
+
+        let additional_keys: Vec<u64> = (8..16).map(|q| (q << qf.r) | 0b0010).collect();
+        for key in &additional_keys {
+            qf.insert(*key);
+        }
+
+        assert_eq!(qf.entries, 16);
+        for key in initial_keys.iter().chain(additional_keys.iter()) {
+            assert!(
+                qf.lookup(*key),
+                "key {:x} should be present after resize and additional inserts",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn test_merge_combines_filters() {
+        let mut left = QuotientFilter::new(4, 4);
+        let mut right = QuotientFilter::new(4, 4);
+
+        let left_keys = vec![0b0001_0001, 0b0010_0010, 0b0011_0011];
+        let right_keys = vec![0b0100_0001, 0b0101_0010];
+
+        for key in &left_keys {
+            left.insert(*key);
+        }
+        for key in &right_keys {
+            right.insert(*key);
+        }
+
+        let merged = left.merge(&right);
+
+        assert_eq!(merged.entries, left.entries + right.entries);
+
+        for key in left_keys.iter().chain(right_keys.iter()) {
+            assert!(
+                merged.lookup(*key),
+                "merged filter should contain {:08b}",
+                key
+            );
+        }
+
+        for key in &left_keys {
+            assert!(left.lookup(*key), "left filter must remain unchanged");
+        }
+        for key in &right_keys {
+            assert!(right.lookup(*key), "right filter must remain unchanged");
+        }
+    }
+
+    #[test]
+    fn test_merge_resizes_and_preserves_duplicates() {
+        let mut left = QuotientFilter::new(3, 4);
+        let mut right = QuotientFilter::new(3, 4);
+
+        let left_keys: Vec<u64> = (0..8).map(|q| (q << left.r) | 0b0001).collect();
+        for key in &left_keys {
+            left.insert(*key);
+        }
+        left.insert(left_keys[0]); // duplicate
+
+        let right_keys: Vec<u64> = (0..8).map(|q| ((q as u64) << right.r) | 0b0010).collect();
+        for key in &right_keys {
+            right.insert(*key);
+        }
+        right.insert(right_keys[0]); // duplicate
+
+        let merged = left.merge(&right);
+
+        assert_eq!(left.entries, left_keys.len() + 1);
+        assert_eq!(right.entries, right_keys.len() + 1);
+
+        assert_eq!(
+            merged.entries,
+            left.entries + right.entries,
+            "merged entries should account for duplicates"
+        );
+        assert!(
+            merged.size >= left.size && merged.size >= right.size,
+            "merged filter should be at least as large as inputs"
+        );
+
+        for key in left_keys.iter().chain(right_keys.iter()) {
+            assert!(
+                merged.lookup(*key),
+                "merged filter should contain {:08b}",
+                key
+            );
+        }
+        assert!(
+            merged.lookup(left_keys[0]),
+            "duplicate key must be present in merged filter"
         );
     }
 
