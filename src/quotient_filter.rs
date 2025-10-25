@@ -139,8 +139,7 @@ impl QuotientFilter {
 
             let run_head = self.find_run_head(quotient_idx);
             self.visit_run(run_head, |slot_idx| {
-                let key =
-                    ((quotient_idx as u64) << self.r) | self.filter[slot_idx].remainder();
+                let key = ((quotient_idx as u64) << self.r) | self.filter[slot_idx].remainder();
                 keys.push(key);
             });
         }
@@ -210,9 +209,7 @@ impl QuotientFilter {
 
         let run_head = self.find_run_head(q_idx);
         let mut insert_pos = run_head;
-        if !self.filter[insert_pos].is_empty()
-            && self.filter[insert_pos].remainder() < remainder
-        {
+        if !self.filter[insert_pos].is_empty() && self.filter[insert_pos].remainder() < remainder {
             loop {
                 insert_pos = self.next_index(insert_pos);
                 if !(self.filter[insert_pos].is_continued()
@@ -635,7 +632,8 @@ mod test {
 
         // q=2 run: index=3,4 → remainders [1,3] (verify ascending order)
         assert_eq!(
-            qf.filter[3].remainder(), 0b0001,
+            qf.filter[3].remainder(),
+            0b0001,
             "q=2 run must be sorted: 1 then 3"
         );
         assert!(!qf.filter[3].is_continued());
@@ -676,7 +674,8 @@ mod test {
         // 3) q=2's home (index=2) has occupied=1, but storage position is at 3 or later (= shifted elements exist)
         assert!(qf.filter[2].is_occupied());
         assert_ne!(
-            qf.filter[2].remainder(), 0b0001,
+            qf.filter[2].remainder(),
+            0b0001,
             "index=2 should not store q=2's first element"
         );
     }
