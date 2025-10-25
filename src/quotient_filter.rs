@@ -40,7 +40,7 @@ impl QuotientFilter {
         (idx + 1) % self.size
     }
 
-    fn locate_run_head(&self, home_idx: usize) -> usize {
+    fn find_run_head(&self, home_idx: usize) -> usize {
         let mut bucket = home_idx;
         while self.filter[bucket].is_shifted {
             bucket = self.prev_index(bucket);
@@ -61,6 +61,10 @@ impl QuotientFilter {
         run_head
     }
 
+    /// Run内の全ての要素に対してクロージャを実行する
+    ///
+    /// * `run_head`: runの先頭スロットのインデックス
+    /// * `f`: 各スロットインデックスに対して実行されるクロージャ
     fn visit_run<F>(&self, run_head: usize, mut f: F)
     where
         F: FnMut(usize),
@@ -85,7 +89,7 @@ impl QuotientFilter {
                 continue;
             }
 
-            let run_head = self.locate_run_head(quotient_idx);
+            let run_head = self.find_run_head(quotient_idx);
             self.visit_run(run_head, |slot_idx| {
                 let key = ((quotient_idx as u64) << self.r) | self.filter[slot_idx].remainder;
                 keys.push(key);
@@ -155,7 +159,7 @@ impl QuotientFilter {
         let already_occupied = self.filter[q_idx].is_occupied;
         self.filter[q_idx].is_occupied = true;
 
-        let run_head = self.locate_run_head(q_idx);
+        let run_head = self.find_run_head(q_idx);
         let mut insert_pos = run_head;
         if !self.filter[insert_pos].is_empty() && self.filter[insert_pos].remainder < remainder {
             loop {
@@ -216,7 +220,7 @@ impl QuotientFilter {
             return false;
         }
 
-        let run_head = self.locate_run_head(q_idx);
+        let run_head = self.find_run_head(q_idx);
         if self.filter[run_head].remainder == remainder {
             return true;
         }
