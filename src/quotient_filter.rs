@@ -1,14 +1,62 @@
-#[derive(Default, Clone)]
+#[derive(Clone, Default)]
 struct Slot {
-    remainder: u64,
-    is_occupied: bool,
-    is_continued: bool,
-    is_shifted: bool,
+    data: u64,
 }
+
+const FLAG_BITS: u64 = 3;
+const FLAG_MASK: u64 = (1 << FLAG_BITS) - 1;
+const FLAG_OCCUPIED: u64 = 1 << 0;
+const FLAG_CONTINUED: u64 = 1 << 1;
+const FLAG_SHIFTED: u64 = 1 << 2;
 
 impl Slot {
     fn is_empty(&self) -> bool {
-        !self.is_occupied && !self.is_continued && !self.is_shifted && self.remainder == 0
+        self.data == 0
+    }
+
+    fn remainder(&self) -> u64 {
+        self.data >> FLAG_BITS
+    }
+
+    fn set_remainder(&mut self, remainder: u64) {
+        let flags = self.data & FLAG_MASK;
+        self.data = (remainder << FLAG_BITS) | flags;
+    }
+
+    fn is_occupied(&self) -> bool {
+        (self.data & FLAG_OCCUPIED) != 0
+    }
+
+    fn set_occupied(&mut self, value: bool) {
+        if value {
+            self.data |= FLAG_OCCUPIED;
+        } else {
+            self.data &= !FLAG_OCCUPIED;
+        }
+    }
+
+    fn is_continued(&self) -> bool {
+        (self.data & FLAG_CONTINUED) != 0
+    }
+
+    fn set_continued(&mut self, value: bool) {
+        if value {
+            self.data |= FLAG_CONTINUED;
+        } else {
+            self.data &= !FLAG_CONTINUED;
+        }
+    }
+
+    fn is_shifted(&self) -> bool {
+        (self.data & FLAG_SHIFTED) != 0
+    }
+
+    fn set_shifted(&mut self, value: bool) {
+        if value {
+            self.data |= FLAG_SHIFTED;
+        } else {
+            self.data &= !FLAG_SHIFTED;
+        }
     }
 }
 
@@ -42,7 +90,7 @@ impl QuotientFilter {
 
     fn find_run_head(&self, home_idx: usize) -> usize {
         let mut bucket = home_idx;
-        while self.filter[bucket].is_shifted {
+        while self.filter[bucket].is_shifted() {
             bucket = self.prev_index(bucket);
         }
 
@@ -50,11 +98,11 @@ impl QuotientFilter {
         let mut probe = bucket;
         while probe != home_idx {
             run_head = self.next_index(run_head);
-            while self.filter[run_head].is_continued {
+            while self.filter[run_head].is_continued() {
                 run_head = self.next_index(run_head);
             }
             probe = self.next_index(probe);
-            while !self.filter[probe].is_occupied {
+            while !self.filter[probe].is_occupied() {
                 probe = self.next_index(probe);
             }
         }
@@ -71,7 +119,7 @@ impl QuotientFilter {
     {
         f(run_head);
         let mut idx = self.next_index(run_head);
-        while self.filter[idx].is_continued {
+        while self.filter[idx].is_continued() {
             f(idx);
             idx = self.next_index(idx);
         }
@@ -85,13 +133,14 @@ impl QuotientFilter {
 
         let size = self.size;
         for quotient_idx in 0..size {
-            if !self.filter[quotient_idx].is_occupied {
+            if !self.filter[quotient_idx].is_occupied() {
                 continue;
             }
 
             let run_head = self.find_run_head(quotient_idx);
             self.visit_run(run_head, |slot_idx| {
-                let key = ((quotient_idx as u64) << self.r) | self.filter[slot_idx].remainder;
+                let key =
+                    ((quotient_idx as u64) << self.r) | self.filter[slot_idx].remainder();
                 keys.push(key);
             });
         }
@@ -150,22 +199,24 @@ impl QuotientFilter {
 
         // if the slot is empty, insert directly
         if self.filter[q_idx].is_empty() {
-            self.filter[q_idx].remainder = remainder;
-            self.filter[q_idx].is_occupied = true;
+            self.filter[q_idx].set_remainder(remainder);
+            self.filter[q_idx].set_occupied(true);
             self.entries += 1;
             return;
         }
 
-        let already_occupied = self.filter[q_idx].is_occupied;
-        self.filter[q_idx].is_occupied = true;
+        let already_occupied = self.filter[q_idx].is_occupied();
+        self.filter[q_idx].set_occupied(true);
 
         let run_head = self.find_run_head(q_idx);
         let mut insert_pos = run_head;
-        if !self.filter[insert_pos].is_empty() && self.filter[insert_pos].remainder < remainder {
+        if !self.filter[insert_pos].is_empty()
+            && self.filter[insert_pos].remainder() < remainder
+        {
             loop {
                 insert_pos = self.next_index(insert_pos);
-                if !(self.filter[insert_pos].is_continued
-                    && self.filter[insert_pos].remainder < remainder)
+                if !(self.filter[insert_pos].is_continued()
+                    && self.filter[insert_pos].remainder() < remainder)
                 {
                     break;
                 }
@@ -175,9 +226,9 @@ impl QuotientFilter {
         let inserting_at_head = insert_pos == run_head;
 
         if self.filter[insert_pos].is_empty() {
-            self.filter[insert_pos].remainder = remainder;
-            self.filter[insert_pos].is_shifted = insert_pos != q_idx;
-            self.filter[insert_pos].is_continued = already_occupied && !inserting_at_head;
+            self.filter[insert_pos].set_remainder(remainder);
+            self.filter[insert_pos].set_shifted(insert_pos != q_idx);
+            self.filter[insert_pos].set_continued(already_occupied && !inserting_at_head);
             self.entries += 1;
             return;
         }
@@ -193,21 +244,21 @@ impl QuotientFilter {
         while curr != insert_pos {
             let prev = self.prev_index(curr);
             let prev_slot = self.filter[prev].clone();
-            self.filter[curr].remainder = prev_slot.remainder;
-            self.filter[curr].is_continued = prev_slot.is_continued;
-            self.filter[curr].is_shifted = true;
+            self.filter[curr].set_remainder(prev_slot.remainder());
+            self.filter[curr].set_continued(prev_slot.is_continued());
+            self.filter[curr].set_shifted(true);
             curr = prev;
         }
 
         // set the new remainder at the insertion position
-        self.filter[insert_pos].remainder = remainder;
-        self.filter[insert_pos].is_shifted = insert_pos != q_idx;
-        self.filter[insert_pos].is_continued = already_occupied && !inserting_at_head;
+        self.filter[insert_pos].set_remainder(remainder);
+        self.filter[insert_pos].set_shifted(insert_pos != q_idx);
+        self.filter[insert_pos].set_continued(already_occupied && !inserting_at_head);
 
         // if inserting at the start of the run, set is_continued=true for the next slot (shifted original run start)
         if inserting_at_head {
             let next = self.next_index(insert_pos);
-            self.filter[next].is_continued = true;
+            self.filter[next].set_continued(true);
         }
 
         self.entries += 1;
@@ -216,18 +267,18 @@ impl QuotientFilter {
     pub fn lookup(&self, key: u64) -> bool {
         let (quotient, remainder) = self.split(key);
         let q_idx = quotient as usize;
-        if !self.filter[q_idx].is_occupied {
+        if !self.filter[q_idx].is_occupied() {
             return false;
         }
 
         let run_head = self.find_run_head(q_idx);
-        if self.filter[run_head].remainder == remainder {
+        if self.filter[run_head].remainder() == remainder {
             return true;
         }
 
         let mut idx = self.next_index(run_head);
-        while self.filter[idx].is_continued {
-            if self.filter[idx].remainder == remainder {
+        while self.filter[idx].is_continued() {
+            if self.filter[idx].remainder() == remainder {
                 return true;
             }
             idx = self.next_index(idx);
@@ -267,10 +318,10 @@ mod test {
 
         let (quotient, remainder) = qf.split(key);
         let idx = quotient as usize;
-        assert_eq!(qf.filter[idx].remainder, remainder);
-        assert!(qf.filter[idx].is_occupied);
-        assert!(!qf.filter[idx].is_continued);
-        assert!(!qf.filter[idx].is_shifted);
+        assert_eq!(qf.filter[idx].remainder(), remainder);
+        assert!(qf.filter[idx].is_occupied());
+        assert!(!qf.filter[idx].is_continued());
+        assert!(!qf.filter[idx].is_shifted());
     }
 
     #[test]
@@ -290,16 +341,16 @@ mod test {
 
         let (quotient, _) = qf.split(key1);
         let idx = quotient as usize;
-        assert!(qf.filter[idx].is_occupied);
+        assert!(qf.filter[idx].is_occupied());
 
         // the first remainder is stored in the quotient slot
-        assert_eq!(qf.filter[idx].remainder, 0b0001);
-        assert!(!qf.filter[idx].is_continued);
+        assert_eq!(qf.filter[idx].remainder(), 0b0001);
+        assert!(!qf.filter[idx].is_continued());
 
         // the second remainder is stored in the next slot with continued flag set
-        assert_eq!(qf.filter[idx + 1].remainder, 0b0010);
-        assert!(qf.filter[idx + 1].is_continued);
-        assert!(qf.filter[idx + 1].is_shifted);
+        assert_eq!(qf.filter[idx + 1].remainder(), 0b0010);
+        assert!(qf.filter[idx + 1].is_continued());
+        assert!(qf.filter[idx + 1].is_shifted());
     }
 
     #[test]
@@ -320,16 +371,16 @@ mod test {
         assert_eq!(qf.entries, 3);
 
         let idx = 1;
-        assert!(qf.filter[idx].is_occupied);
+        assert!(qf.filter[idx].is_occupied());
 
-        assert_eq!(qf.filter[idx].remainder, 0b0001);
-        assert_eq!(qf.filter[idx + 1].remainder, 0b0010);
-        assert_eq!(qf.filter[idx + 2].remainder, 0b0011);
+        assert_eq!(qf.filter[idx].remainder(), 0b0001);
+        assert_eq!(qf.filter[idx + 1].remainder(), 0b0010);
+        assert_eq!(qf.filter[idx + 2].remainder(), 0b0011);
 
         // the first element should have continued = false
-        assert!(!qf.filter[idx].is_continued);
-        assert!(qf.filter[idx + 1].is_continued);
-        assert!(qf.filter[idx + 2].is_continued);
+        assert!(!qf.filter[idx].is_continued());
+        assert!(qf.filter[idx + 1].is_continued());
+        assert!(qf.filter[idx + 2].is_continued());
     }
 
     #[test]
@@ -341,11 +392,11 @@ mod test {
         qf.insert(0b0001_0001);
 
         assert!(
-            qf.filter[1].is_occupied,
+            qf.filter[1].is_occupied(),
             "home bucket for quotient=1 must remain occupied"
         );
         assert!(
-            !qf.filter[2].is_occupied,
+            !qf.filter[2].is_occupied(),
             "inserting only quotient=1 elements must not mark quotient=2 as occupied"
         );
     }
@@ -479,24 +530,24 @@ mod test {
         assert_eq!(qf.entries, 3);
 
         // quotient=0b0001 slot (first remainder)
-        assert!(qf.filter[1].is_occupied);
-        assert_eq!(qf.filter[1].remainder, 0b0001);
-        assert!(!qf.filter[1].is_shifted);
-        assert!(!qf.filter[1].is_continued);
+        assert!(qf.filter[1].is_occupied());
+        assert_eq!(qf.filter[1].remainder(), 0b0001);
+        assert!(!qf.filter[1].is_shifted());
+        assert!(!qf.filter[1].is_continued());
 
         // quotient=0b0010 slot
-        assert!(qf.filter[2].is_occupied);
+        assert!(qf.filter[2].is_occupied());
 
         // With the corrected insert, quotient=1's run should be contiguous
         // so filter[2] should contain the second element of quotient=1's run
-        assert_eq!(qf.filter[2].remainder, 0b0011);
-        assert!(qf.filter[2].is_shifted);
-        assert!(qf.filter[2].is_continued);
+        assert_eq!(qf.filter[2].remainder(), 0b0011);
+        assert!(qf.filter[2].is_shifted());
+        assert!(qf.filter[2].is_continued());
 
         // quotient=0b0010's element is shifted to filter[3]
-        assert_eq!(qf.filter[3].remainder, 0b0010);
-        assert!(qf.filter[3].is_shifted);
-        assert!(!qf.filter[3].is_continued);
+        assert_eq!(qf.filter[3].remainder(), 0b0010);
+        assert!(qf.filter[3].is_shifted());
+        assert!(!qf.filter[3].is_continued());
     }
 
     #[test]
@@ -512,8 +563,8 @@ mod test {
         assert_eq!(qf.entries, 2);
 
         let idx = 1;
-        assert_eq!(qf.filter[idx].remainder, 0b0001);
-        assert_eq!(qf.filter[idx + 1].remainder, 0b0001);
+        assert_eq!(qf.filter[idx].remainder(), 0b0001);
+        assert_eq!(qf.filter[idx + 1].remainder(), 0b0001);
     }
 
     #[test]
@@ -532,13 +583,13 @@ mod test {
         assert_eq!(qf.entries, 2);
 
         let idx = 15;
-        assert!(qf.filter[idx].is_occupied);
-        assert_eq!(qf.filter[idx].remainder, 0b0001);
+        assert!(qf.filter[idx].is_occupied());
+        assert_eq!(qf.filter[idx].remainder(), 0b0001);
 
         // next slot wraps around to 0
-        assert_eq!(qf.filter[0].remainder, 0b0010);
-        assert!(qf.filter[0].is_shifted);
-        assert!(qf.filter[0].is_continued);
+        assert_eq!(qf.filter[0].remainder(), 0b0010);
+        assert!(qf.filter[0].is_shifted());
+        assert!(qf.filter[0].is_continued());
     }
 
     #[test]
@@ -559,49 +610,49 @@ mod test {
         assert_eq!(qf.entries, 5);
 
         assert!(
-            qf.filter[1].is_occupied,
+            qf.filter[1].is_occupied(),
             "q=1 should set occupied at bucket 1"
         );
         assert!(
-            qf.filter[2].is_occupied,
+            qf.filter[2].is_occupied(),
             "q=2 should set occupied at bucket 2"
         );
         assert!(
-            qf.filter[3].is_occupied,
+            qf.filter[3].is_occupied(),
             "q=3 should set occupied at bucket 3"
         );
 
-        assert_eq!(qf.filter[1].remainder, 0b0001);
-        assert!(!qf.filter[1].is_continued);
-        assert!(!qf.filter[1].is_shifted, "first of q=1 is at home");
+        assert_eq!(qf.filter[1].remainder(), 0b0001);
+        assert!(!qf.filter[1].is_continued());
+        assert!(!qf.filter[1].is_shifted(), "first of q=1 is at home");
 
-        assert_eq!(qf.filter[2].remainder, 0b0010);
-        assert!(qf.filter[2].is_continued);
+        assert_eq!(qf.filter[2].remainder(), 0b0010);
+        assert!(qf.filter[2].is_continued());
         assert!(
-            qf.filter[2].is_shifted,
+            qf.filter[2].is_shifted(),
             "q=1 second element must be shifted"
         );
 
         // q=2 run: index=3,4 → remainders [1,3] (verify ascending order)
         assert_eq!(
-            qf.filter[3].remainder, 0b0001,
+            qf.filter[3].remainder(), 0b0001,
             "q=2 run must be sorted: 1 then 3"
         );
-        assert!(!qf.filter[3].is_continued);
+        assert!(!qf.filter[3].is_continued());
         assert!(
-            qf.filter[3].is_shifted,
+            qf.filter[3].is_shifted(),
             "q=2 first element is not at home (home=2)"
         );
 
-        assert_eq!(qf.filter[4].remainder, 0b0011);
-        assert!(qf.filter[4].is_continued);
-        assert!(qf.filter[4].is_shifted);
+        assert_eq!(qf.filter[4].remainder(), 0b0011);
+        assert!(qf.filter[4].is_continued());
+        assert!(qf.filter[4].is_shifted());
 
         // q=3 run: index=5 → remainder [2]
-        assert_eq!(qf.filter[5].remainder, 0b0010);
-        assert!(!qf.filter[5].is_continued);
+        assert_eq!(qf.filter[5].remainder(), 0b0010);
+        assert!(!qf.filter[5].is_continued());
         assert!(
-            qf.filter[5].is_shifted,
+            qf.filter[5].is_shifted(),
             "q=3 first element is not at home (home=3)"
         );
 
@@ -609,7 +660,7 @@ mod test {
         // 1) run heads must have is_continued=0
         for &i in &[1, 3, 5] {
             assert!(
-                !qf.filter[i].is_continued,
+                !qf.filter[i].is_continued(),
                 "run head must have is_continued=0 at {}",
                 i
             );
@@ -617,15 +668,15 @@ mod test {
         // 2) run bodies (non-heads) must have is_continued=1
         for &i in &[2, 4] {
             assert!(
-                qf.filter[i].is_continued,
+                qf.filter[i].is_continued(),
                 "run body must have is_continued=1 at {}",
                 i
             );
         }
         // 3) q=2's home (index=2) has occupied=1, but storage position is at 3 or later (= shifted elements exist)
-        assert!(qf.filter[2].is_occupied);
+        assert!(qf.filter[2].is_occupied());
         assert_ne!(
-            qf.filter[2].remainder, 0b0001,
+            qf.filter[2].remainder(), 0b0001,
             "index=2 should not store q=2's first element"
         );
     }
@@ -644,10 +695,10 @@ mod test {
         let (quotient, remainder) = qf.split(key);
         let idx = quotient as usize;
 
-        qf.filter[idx].remainder = remainder;
-        qf.filter[idx].is_occupied = true;
-        qf.filter[idx].is_continued = false;
-        qf.filter[idx].is_shifted = false;
+        qf.filter[idx].set_remainder(remainder);
+        qf.filter[idx].set_occupied(true);
+        qf.filter[idx].set_continued(false);
+        qf.filter[idx].set_shifted(false);
         qf.entries = 1;
 
         assert!(qf.lookup(key));
@@ -659,20 +710,20 @@ mod test {
         let quotient = 0b0001;
         let idx = quotient as usize;
 
-        qf.filter[idx].remainder = 0b0001;
-        qf.filter[idx].is_occupied = true;
-        qf.filter[idx].is_continued = false;
-        qf.filter[idx].is_shifted = false;
+        qf.filter[idx].set_remainder(0b0001);
+        qf.filter[idx].set_occupied(true);
+        qf.filter[idx].set_continued(false);
+        qf.filter[idx].set_shifted(false);
 
-        qf.filter[idx + 1].remainder = 0b0010;
-        qf.filter[idx + 1].is_occupied = false;
-        qf.filter[idx + 1].is_continued = true;
-        qf.filter[idx + 1].is_shifted = true;
+        qf.filter[idx + 1].set_remainder(0b0010);
+        qf.filter[idx + 1].set_occupied(false);
+        qf.filter[idx + 1].set_continued(true);
+        qf.filter[idx + 1].set_shifted(true);
 
-        qf.filter[idx + 2].remainder = 0b0011;
-        qf.filter[idx + 2].is_occupied = false;
-        qf.filter[idx + 2].is_continued = true;
-        qf.filter[idx + 2].is_shifted = true;
+        qf.filter[idx + 2].set_remainder(0b0011);
+        qf.filter[idx + 2].set_occupied(false);
+        qf.filter[idx + 2].set_continued(true);
+        qf.filter[idx + 2].set_shifted(true);
 
         qf.entries = 3;
 
@@ -691,25 +742,25 @@ mod test {
     fn test_lookup_multiple_different_quotients() {
         let mut qf = QuotientFilter::new(4, 4);
 
-        qf.filter[1].remainder = 0b0001;
-        qf.filter[1].is_occupied = true;
-        qf.filter[1].is_continued = false;
-        qf.filter[1].is_shifted = false;
+        qf.filter[1].set_remainder(0b0001);
+        qf.filter[1].set_occupied(true);
+        qf.filter[1].set_continued(false);
+        qf.filter[1].set_shifted(false);
 
-        qf.filter[3].remainder = 0b0010;
-        qf.filter[3].is_occupied = true;
-        qf.filter[3].is_continued = false;
-        qf.filter[3].is_shifted = false;
+        qf.filter[3].set_remainder(0b0010);
+        qf.filter[3].set_occupied(true);
+        qf.filter[3].set_continued(false);
+        qf.filter[3].set_shifted(false);
 
-        qf.filter[5].remainder = 0b0011;
-        qf.filter[5].is_occupied = true;
-        qf.filter[5].is_continued = false;
-        qf.filter[5].is_shifted = false;
+        qf.filter[5].set_remainder(0b0011);
+        qf.filter[5].set_occupied(true);
+        qf.filter[5].set_continued(false);
+        qf.filter[5].set_shifted(false);
 
-        qf.filter[7].remainder = 0b0100;
-        qf.filter[7].is_occupied = true;
-        qf.filter[7].is_continued = false;
-        qf.filter[7].is_shifted = false;
+        qf.filter[7].set_remainder(0b0100);
+        qf.filter[7].set_occupied(true);
+        qf.filter[7].set_continued(false);
+        qf.filter[7].set_shifted(false);
 
         qf.entries = 4;
 
